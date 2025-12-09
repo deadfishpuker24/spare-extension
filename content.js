@@ -136,7 +136,7 @@ function extractPhiUSIILFeatures() {
 
   const noOfPopUp = countMatches(html, /window\.open\s*\(/gi);
 
-  const noOfFrame =
+  const noOfiFrame =
     document.querySelectorAll("frame").length +
     document.querySelectorAll("iframe").length;
 
@@ -313,7 +313,7 @@ function extractPhiUSIILFeatures() {
 
     HasDescription: hasDescription,
     NoOfPopUp: noOfPopUp,
-    NoOfFrame: noOfFrame,
+    NoOfiFrame: noOfiFrame,
 
     HasExternalFormSubmit: hasExternalFormSubmit,
     HasSocialNet: hasSocialNet,
