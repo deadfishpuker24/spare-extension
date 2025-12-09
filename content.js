@@ -23,6 +23,41 @@ function jaccardTokenSimilarity(a, b) {
   return union === 0 ? 0 : inter / union;
 }
 
+//newaddnstarts
+
+// Character continuation rate (repeated characters sequence indicator)
+function computeCharContinuationRate(url) {
+  let repeats = 0;
+  for (let i = 1; i < url.length; i++) {
+    if (url[i] === url[i - 1]) repeats++;
+  }
+  return repeats / url.length;
+}
+
+// Probability URL uses common characters (letters + numbers)
+function computeURLCharProb(url) {
+  const normal = countMatches(url, /[A-Za-z0-9]/g);
+  return normal / url.length;
+}
+
+// TLD legitimacy probability
+function computeTLDLegitimateProb(tld) {
+  const trusted = ["com", "in", "co", "org", "net", "edu", "gov"];
+  return trusted.includes(tld.toLowerCase()) ? 1 : 0.2; //0.2 for risky sites
+}
+
+// Obfuscation detection: %xx encoded characters
+function computeObfuscation(url) {
+  const matches = url.match(/%[0-9A-Fa-f]{2}/g);
+  const count = matches ? matches.length : 0;
+  return {
+    has: count > 0 ? 1 : 0,
+    count,
+    ratio: count / url.length
+  };
+}
+//newaddntillhere
+
 function extractPhiUSIILFeatures() {
   const urlObj = new URL(window.location.href);
   const urlStr = urlObj.href;
@@ -239,14 +274,15 @@ function extractPhiUSIILFeatures() {
     TLDLength: tldLength,
     NoOfSubDomain: noOfSubDomain,
 
-    URLSimilarityIndex: null,
-    CharContinuationRate: null,
-    TLDLegitimateProb: null,
-    URLCharProb: null,
+    //URLSimilarityIndex: null,
+    CharContinuationRate: computeCharContinuationRate(urlStr),
+    TLDLegitimateProb: computeTLDLegitimateProb(tldPart),
+    URLCharProb: computeURLCharProb(urlStr),
 
-    HasObfuscation: null,
-    NoOfObfuscatedChar: null,
-    ObfuscationRatio: null,
+    HasObfuscation: computeObfuscation(urlStr).has,
+    NoOfObfuscatedChar: computeObfuscation(urlStr).count,
+    ObfuscationRatio: computeObfuscation(urlStr).ratio,
+
 
     NoOfLettersInURL: numLetters,
     LetterRatioInURL: letterRatioInURL,
