@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "S.P.A.R.E Extension",
+  "version": "1.0.0",
+  "description": "ML Testsing-Mendeley dataset",
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "storage"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "http://localhost:5000/*"
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content_features.js"],
+      "run_at": "document_end"
+    }
+  ]
+}

@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>S.P.A.R.E</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <div class="header">
+      <h1>S.P.A.R.E</h1>
+      <p id="status-line">Analyzing...</p>
+    </div>
+
+    <!-- Main Result -->
+    <div id="result-card" class="result-card">
+      <h2 id="result-title">SCANNING</h2>
+      <div class="confidence-bar">
+        <div id="confidence-fill" class="confidence-fill"></div>
+      </div>
+      <p id="confidence-text">Confidence: 0%</p>
+    </div>
+
+    <!-- URL -->
+    <div class="section">
+      <div class="section-title">URL</div>
+      <div id="url-display" class="code-block"></div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="prediction">PREDICTION</button>
+      <button class="tab-btn" data-tab="features">FEATURES</button>
+      <button class="tab-btn" data-tab="offpage">OFF-PAGE</button>
+      <button class="tab-btn" data-tab="visual">VISUAL</button>
+    </div>
+
+    <!-- Tab Content -->
+    <div class="tab-content">
+      <!-- Prediction Tab -->
+      <div id="prediction-tab" class="tab-pane active">
+        <div class="section">
+          <div class="section-title">ANALYSIS</div>
+          <div id="analysis-output" class="code-block"></div>
+        </div>
+      </div>
+
+      <!-- Features Tab -->
+      <div id="features-tab" class="tab-pane">
+        <div class="section">
+          <div class="section-title">EXTRACTED FEATURES (80)</div>
+          <pre id="features-output" class="code-block"></pre>
+        </div>
+      </div>
+
+      <!-- Off-Page Tab -->
+      <div id="offpage-tab" class="tab-pane">
+        <div class="section">
+          <div class="section-title">DOMAIN RISK ANALYSIS</div>
+          <pre id="offpage-output" class="code-block"></pre>
+        </div>
+      </div>
+
+      <!-- Visual Tab -->
+      <div id="visual-tab" class="tab-pane">
+        <div class="section">
+          <div class="section-title">VISUAL ANALYSIS</div>
+          <pre id="visual-output" class="code-block">...</pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <button id="reanalyze-btn" class="btn">RE-ANALYZE</button>
+  </div>
+
+  <script src="feature_extractor.js"></script>
+  <script type="module" src="offpage.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
