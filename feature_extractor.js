@@ -432,7 +432,7 @@ class FeatureExtractor {
   domain_with_copyright() {
     if (!this.dom) return 0;
     const html = this.dom.documentElement.outerHTML;
-    const copyrightMatch = html.match(/[Â©Â®â„¢]/);
+    const copyrightMatch = html.match(/[Ã‚Â©Ã‚Â®Ã¢â€žÂ¢]/);
     if (!copyrightMatch) return 0;
     
     const idx = copyrightMatch.index;

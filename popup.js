@@ -60,52 +60,91 @@ async function startAnalysis() {
     const domain = new URL(url).hostname;
     analyzeOffpage(domain);
 
-    // STEP 2: Extract content features from page (24 features)
-    chrome.tabs.sendMessage(tab.id, { action: 'extractContentFeatures' }, async (response) => {
-      let allFeatures;
+    // STEP 2: Inject content script if not already injected
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ['content_features.js']
+      });
+      console.log('[Phishing Detector] Content script injected');
+      // Wait a bit for script to initialize
+      await new Promise(r => setTimeout(r, 100));
+    } catch (error) {
+      console.warn('[Phishing Detector] Script injection failed:', error);
+    }
 
-      if (chrome.runtime.lastError || !response || !response.features) {
-        console.warn('[Phishing Detector] Content features unavailable, using URL only');
-        allFeatures = urlFeatures; // Already has 80 (56 real + 24 zeros)
-      } else {
-        // Combine: 56 URL features + 24 content features
-        const contentFeatures = response.features;
-        allFeatures = [
-          ...urlFeatures.slice(0, 56),
-          ...contentFeatures
-        ];
-        console.log('[Phishing Detector] Combined features:', allFeatures.length);
-      }
+    // STEP 3: Extract content features from page (24 features) with retry
+    let contentResponse = null;
+    let attempts = 0;
+    const maxAttempts = 3;
 
-      analysisData.features = allFeatures;
-      displayFeatures(allFeatures);
-
-      // STEP 3: Send to Flask API
+    while (!contentResponse && attempts < maxAttempts) {
       try {
-        const apiResponse = await fetch('http://localhost:5000/analyze', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            url: url,
-            features: allFeatures
-          })
+        contentResponse = await new Promise((resolve, reject) => {
+          chrome.tabs.sendMessage(tab.id, { action: 'extractContentFeatures' }, (response) => {
+            if (chrome.runtime.lastError) {
+              reject(chrome.runtime.lastError);
+            } else {
+              resolve(response);
+            }
+          });
         });
-
-        if (!apiResponse.ok) {
-          throw new Error('API returned error status');
+        
+        if (contentResponse && contentResponse.features) {
+          console.log('[Phishing Detector] Content features extracted successfully');
         }
-
-        const result = await apiResponse.json();
-        analysisData.prediction = result;
-        displayPrediction(result);
-        console.log('[Phishing Detector] Prediction:', result);
-
       } catch (error) {
-        console.error('[Phishing Detector] API error:', error);
-        showError('Flask API not responding. Ensure it is running on localhost:5000');
-        displayFeatures(allFeatures); // Still show features even if API fails
+        attempts++;
+        console.log(`[Phishing Detector] Retry ${attempts}/${maxAttempts} - Content script not ready`);
+        if (attempts < maxAttempts) {
+          await new Promise(r => setTimeout(r, 300)); // Wait 300ms between retries
+        }
       }
-    });
+    }
+
+    // Process features
+    let allFeatures;
+    if (!contentResponse || !contentResponse.features) {
+      console.warn('[Phishing Detector] Content features unavailable after retries, using URL only');
+      allFeatures = urlFeatures; // Already has 80 (56 real + 24 zeros)
+    } else {
+      // Combine: 56 URL features + 24 content features
+      const contentFeatures = contentResponse.features;
+      allFeatures = [
+        ...urlFeatures.slice(0, 56),
+        ...contentFeatures
+      ];
+      console.log('[Phishing Detector] Combined features:', allFeatures.length);
+    }
+
+    analysisData.features = allFeatures;
+    displayFeatures(allFeatures);
+
+    // STEP 4: Send to Flask API
+    try {
+      const apiResponse = await fetch('http://localhost:5000/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: url,
+          features: allFeatures
+        })
+      });
+
+      if (!apiResponse.ok) {
+        throw new Error('API returned error status');
+      }
+
+      const result = await apiResponse.json();
+      analysisData.prediction = result;
+      displayPrediction(result);
+      console.log('[Phishing Detector] Prediction:', result);
+
+    } catch (error) {
+      console.error('[Phishing Detector] API error:', error);
+      showError('Flask API not responding. Ensure it is running on localhost:5000');
+      displayFeatures(allFeatures); // Still show features even if API fails
+    }
 
   } catch (error) {
     console.error('[Phishing Detector] Fatal error:', error);
