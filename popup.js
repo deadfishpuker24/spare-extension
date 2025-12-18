@@ -3,7 +3,8 @@
 let analysisData = {
   prediction: null,
   features: null,
-  offpage: null
+  offpage: null,
+  visual: null
 };
 
 // Initialize
@@ -45,6 +46,26 @@ async function startAnalysis() {
     if (urlDisplay) urlDisplay.textContent = url;
     if (statusLine) statusLine.textContent = url;
 
+    // === NEW: Start Visual Analysis (Async) ===
+    // This runs in the background while the ML model works
+    const visualOutput = document.getElementById('visual-output');
+    if (visualOutput) visualOutput.textContent = "Running Visual Analysis (DAVSS)...";
+    
+    chrome.runtime.sendMessage({ 
+      action: 'run_davss_analysis', 
+      tabId: tab.id, 
+      url: url 
+    }, (response) => {
+      // Handle the async response when it eventually arrives
+      if (chrome.runtime.lastError) {
+        console.warn("Visual analysis error:", chrome.runtime.lastError);
+        displayVisuals({ error: true, errorMessage: chrome.runtime.lastError.message });
+      } else {
+        analysisData.visual = response?.davss;
+        displayVisuals(response?.davss);
+      }
+    });
+
     // STEP 1: Extract URL features (56 features)
     const urlExtractor = new FeatureExtractor(url);
     const urlFeatures = urlExtractor.extractFeatures();
@@ -57,8 +78,9 @@ async function startAnalysis() {
     console.log('[Phishing Detector] URL features extracted:', urlFeatures.length);
 
     // STEP 1.5: Extract domain for off-page analysis
+    // NOTE: We capture the promise here so we can wait for it later
     const domain = new URL(url).hostname;
-    analyzeOffpage(domain);
+    const offpageAnalysisPromise = analyzeOffpage(domain);
 
     // STEP 2: Inject content script if not already injected
     try {
@@ -135,10 +157,22 @@ async function startAnalysis() {
         throw new Error('API returned error status');
       }
 
-      const result = await apiResponse.json();
+      let result = await apiResponse.json();
+      
+      // === SMART CHECK INTEGRATION ===
+      // Wait for offpage analysis to finish so we have the data
+      try {
+          await offpageAnalysisPromise;
+      } catch (e) {
+          console.warn("Offpage analysis failed, skipping smart check", e);
+      }
+      
+      // Run the Heuristic Override
+      result = smartLoginPageCheck(url, result, analysisData.offpage);
+      
       analysisData.prediction = result;
       displayPrediction(result);
-      console.log('[Phishing Detector] Prediction:', result);
+      console.log('[Phishing Detector] Final Result:', result);
 
     } catch (error) {
       console.error('[Phishing Detector] API error:', error);
@@ -309,5 +343,95 @@ function showError(message) {
   
   if (analysisOutput) {
     analysisOutput.textContent = message;
+  }
+}
+
+// === NEW VISUAL DISPLAY FUNCTION ===
+function displayVisuals(davssData) {
+  const visualOutput = document.getElementById('visual-output');
+  if (!visualOutput) return;
+
+  if (!davssData) {
+    visualOutput.textContent = "No data returned.";
+    return;
+  }
+
+  if (davssData.error) {
+    visualOutput.textContent = `Error: ${davssData.errorMessage || "Unknown error"}`;
+    visualOutput.style.color = "red";
+    return;
+  }
+
+  // Determine status color (if score > 0 it is suspicious)
+  const isSuspicious = davssData.similarityScore > 0;
+  const statusColor = isSuspicious ? "red" : "green";
+
+  const report = {
+    "Status": davssData.status || (isSuspicious ? "Suspicious" : "Safe"),
+    "True Domain": davssData.trueDomain || "N/A",
+    "Current Domain": davssData.currentDomain || "N/A",
+    "Confidence": (davssData.confidenceScore * 100).toFixed(1) + "%",
+    "Scenario": davssData.scenario || "N/A",
+    "Text Threat": davssData.textThreatDetected ? "YES" : "NO"
+  };
+
+  visualOutput.textContent = JSON.stringify(report, null, 2);
+  visualOutput.style.color = statusColor;
+}
+
+// === SMART HEURISTIC FUNCTION ===
+function smartLoginPageCheck(url, prediction, offpageData) {
+  try {
+    const urlObj = new URL(url);
+    const path = urlObj.pathname.toLowerCase();
+    
+    // 1. Is it a login page?
+    const isLoginPage = /\/login|\/signin|\/sign-in|\/auth|\/account/.test(path);
+    
+    // If it's NOT a login page, or the ML model already thinks it's safe, return original
+    if (!isLoginPage || !prediction.is_phishing) return prediction;
+    
+    // 2. Check off-page data availability
+    if (!offpageData || offpageData.error) {
+        console.log("Skipping smart check: No offpage data available");
+        // FALLBACK: If API fails, check for HTTPS to avoid blind blocking
+        if (urlObj.protocol === 'https:') {
+             return {
+                ...prediction,
+                is_phishing: false,
+                risk_level: 'MEDIUM',
+                confidence: 0.5,
+                suspiciousFeatures: ["Warning: Verification service unavailable"]
+            };
+        }
+        return prediction;
+    }
+
+    // 3. The Rules
+    const domainAge = offpageData.daysAge || 0;
+    const isHTTPS = urlObj.protocol === 'https:';
+    
+    // Rule: If older than 6 months (180 days) AND HTTPS
+    if (domainAge > 180 && isHTTPS) {
+      console.log(`[Smart Check] OVERRIDE: Login page on established domain (${domainAge} days)`);
+      
+      return {
+        ...prediction,
+        is_phishing: false,
+        confidence: 0.15, // Force low confidence (15%)
+        class: 'legitimate',
+        risk_level: 'LOW',
+        suspicious_features: [
+            ...((prediction.suspicious_features || []).filter(f => !f.includes('Login'))), // Remove login warnings
+            `Verified: Established Domain (${domainAge} days old)`
+        ]
+      };
+    }
+    
+    return prediction;
+
+  } catch (e) {
+    console.error("Smart check error:", e);
+    return prediction;
   }
 }

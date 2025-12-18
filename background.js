@@ -1,6 +1,23 @@
-// Background service worker - communicates with Flask API
+// Background service worker - communicates with Flask API and DAVSS
+
+import { calculateDavssScore } from './davssService.js';
+import { TRUSTED_DOMAINS } from './data/trustedList.js';
 
 const API_URL = 'http://localhost:5000';
+
+// Helper: Check whitelist to skip expensive visual analysis
+function isWhitelisted(url) {
+  try {
+    const hostname = new URL(url).hostname;
+    // Simple check: is the hostname (or root) in the set?
+    // This handles basic cases. For complex subdomains, strict matching is used here.
+    const parts = hostname.split('.');
+    const root = parts.slice(-2).join('.'); // simple root extraction
+    return TRUSTED_DOMAINS.has(hostname) || TRUSTED_DOMAINS.has(root);
+  } catch (e) {
+    return false;
+  }
+}
 
 // Check API health on startup
 async function checkAPIHealth() {
@@ -23,11 +40,13 @@ chrome.runtime.onInstalled.addListener(() => {
 
 // Message handler
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  
+  // --- EXISTING HANDLERS ---
   if (request.action === 'analyzeURL') {
     analyzeURL(request.url, request.features)
       .then(result => sendResponse(result))
       .catch(error => sendResponse({ error: error.message }));
-    return true; // Keep channel open for async response
+    return true; // Keep channel open
   }
   
   if (request.action === 'getStatus') {
@@ -44,44 +63,63 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       }));
     return true;
   }
+
+  // --- NEW VISUAL ANALYSIS HANDLER ---
+  if (request.action === 'run_davss_analysis') {
+    const { tabId, url } = request;
+
+    // 1. Check whitelist first to save API credits
+    if (isWhitelisted(url)) {
+      console.log(`[DAVSS] ${url} is whitelisted. Skipping visual check.`);
+      sendResponse({ 
+        davss: { 
+          status: "Safe", 
+          whitelisted: true, 
+          similarityScore: 0,
+          confidenceScore: 1.0,
+          trueDomain: new URL(url).hostname 
+        } 
+      });
+      return true;
+    }
+
+    // 2. Run Analysis
+    console.log(`[DAVSS] Starting visual analysis for ${url}`);
+    calculateDavssScore(tabId, url)
+      .then(result => {
+        sendResponse({ davss: result });
+      })
+      .catch(err => {
+        console.error("DAVSS Error:", err);
+        sendResponse({ davss: { error: true, errorMessage: err.message } });
+      });
+      
+    return true; // Keep channel open
+  }
 });
 
 async function analyzeURL(url, features) {
   try {
-    // Check cache first
     const cacheKey = `result_${url}`;
     const cached = await chrome.storage.local.get(cacheKey);
     
     if (cached[cacheKey]) {
       const age = Date.now() - cached[cacheKey].timestamp;
-      // Use cache if less than 1 hour old
       if (age < 60 * 60 * 1000) {
-        console.log('📦 Using cached result');
         return cached[cacheKey];
       }
     }
 
-    // Call Flask API
-    console.log('🔍 Calling API for analysis...');
     const response = await fetch(`${API_URL}/analyze`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        url: url,
-        features: features
-      })
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: url, features: features })
     });
 
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'API request failed');
-    }
+    if (!response.ok) throw new Error('API request failed');
 
     const result = await response.json();
     
-    // Cache result
     const cacheData = {
       isPhishing: result.is_phishing,
       confidence: result.confidence,
@@ -91,47 +129,15 @@ async function analyzeURL(url, features) {
     };
     
     await chrome.storage.local.set({ [cacheKey]: cacheData });
-    
-    console.log('✅ Analysis complete:', result.class);
     return cacheData;
 
   } catch (error) {
-    console.error('❌ Analysis error:', error);
-    
-    // Fallback: basic heuristic if API fails
     return {
-      error: `API Error: ${error.message}. Make sure Flask server is running on ${API_URL}`,
+      error: `API Error: ${error.message}`,
       isPhishing: false,
       confidence: 0,
       suspiciousFeatures: [],
       riskLevel: 'UNKNOWN'
     };
   }
-}
-
-// Clean old cache entries periodically
-if (chrome.alarms) {
-  chrome.alarms.create('cleanCache', { periodInMinutes: 60 });
-  chrome.alarms.onAlarm.addListener((alarm) => {
-    if (alarm.name === 'cleanCache') {
-      chrome.storage.local.get(null, (items) => {
-        const now = Date.now();
-        const toRemove = [];
-        
-        for (const [key, value] of Object.entries(items)) {
-          if (key.startsWith('result_') && value.timestamp) {
-            // Remove entries older than 24 hours
-            if (now - value.timestamp > 24 * 60 * 60 * 1000) {
-              toRemove.push(key);
-            }
-          }
-        }
-        
-        if (toRemove.length > 0) {
-          chrome.storage.local.remove(toRemove);
-          console.log(`🧹 Cleaned ${toRemove.length} old cache entries`);
-        }
-      });
-    }
-  });
 }
