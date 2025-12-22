@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "S.P.A.R.E Extension",
   "version": "1.0.0",
-  "description": "ML Testsing-Mendeley dataset",
+  "description": "Extension for real-time browser phishing detection.",
   "permissions": [
     "activeTab",
     "tabs",

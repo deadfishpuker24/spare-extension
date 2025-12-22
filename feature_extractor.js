@@ -167,13 +167,46 @@ class FeatureExtractor {
   }
   
   count_redirection() {
-    // Can't detect HTTP redirects in browser extension, return 0
-    return 0;
-  }
+  // Check for meta refresh redirects
+  let count = 0;
   
-  count_external_redirection() {
-    return 0;
-  }
+  // Meta refresh tags
+  const metaRefresh = document.querySelectorAll('meta[http-equiv="refresh"]');
+  count += metaRefresh.length;
+  
+  // JavaScript redirects in script tags
+  const scripts = document.querySelectorAll('script');
+  scripts.forEach(script => {
+    const content = script.textContent || '';
+    // Check for common redirect patterns
+    if (/window\.location\s*=|location\.href\s*=|location\.replace\(/i.test(content)) {
+      count++;
+    }
+  });
+  
+  return Math.min(count, 5); // Cap at 5
+}
+
+count_external_redirection() {
+  // Check if redirects point to external domains
+  let count = 0;
+  
+  // Meta refresh with external URL
+  const metaRefresh = document.querySelectorAll('meta[http-equiv="refresh"]');
+  metaRefresh.forEach(meta => {
+    const content = meta.getAttribute('content') || '';
+    const urlMatch = content.match(/url\s*=\s*['"]?([^'">\s]+)/i);
+    if (urlMatch && urlMatch[1]) {
+      const url = urlMatch[1];
+      // Check if external
+      if (url.startsWith('http') && !url.includes(this.parsed.domain)) {
+        count++;
+      }
+    }
+  });
+  
+  return count;
+}
   
   length_word_raw() {
     return this.parsed.words_raw.length;
@@ -506,10 +539,10 @@ class FeatureExtractor {
       this.external_hyperlinks(),
       this.null_hyperlinks(),
       this.external_css(),
-      0, // internal_redirection (requires HTTP requests)
-      0, // external_redirection
-      0, // internal_errors
-      0, // external_errors
+      this.count_redirection(), // Use the function instead of 0
+      this.count_external_redirection(), // Use the function instead of 0
+      0, // internal_errors (still 0 - can't detect without network requests)
+      0, // external_errors (still 0 - can't detect without network requests)
       this.login_form(),
       this.external_favicon(),
       this.links_in_tags(),

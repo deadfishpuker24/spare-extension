@@ -48,7 +48,7 @@ async function startAnalysis() {
 
     // === NEW: Start Visual Analysis (Async) ===
     // This runs in the background while the ML model works
-    const visualOutput = document.getElementById('visual-output');
+    /*const visualOutput = document.getElementById('visual-output');
     if (visualOutput) visualOutput.textContent = "Running Visual Analysis (DAVSS)...";
     
     chrome.runtime.sendMessage({ 
@@ -64,7 +64,7 @@ async function startAnalysis() {
         analysisData.visual = response?.davss;
         displayVisuals(response?.davss);
       }
-    });
+    });*/
 
     // STEP 1: Extract URL features (56 features)
     const urlExtractor = new FeatureExtractor(url);
