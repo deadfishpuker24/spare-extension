@@ -18,10 +18,7 @@ const BRANDS = ['accenture','adidas','adobe','alibaba','amazon','apple','audi','
                 'ibm','ikea','instagram','intel','linkedin','mcdonalds','microsoft',
                 'netflix','nike','oracle','paypal','pepsi','samsung','shell','sony',
                 'spotify','starbucks','target','tesla','twitter','ups','visa','walmart',
-                'wikipedia','yahoo','youtube',
-              
-                //ADDED FROM brands.txt LIST
-                'activisionblizzard','adultfriendfinder','akamai','aliexpress','alipay',
+                'wikipedia','yahoo','youtube','activisionblizzard','adultfriendfinder','akamai','aliexpress','alipay',
                 'allianz','alphabet','americanairlines','americanexpress','americantower',
                 'apache','autodesk','badoo','baidu','bankofamerica','bankofchina','barclays','bbva',
                 'bebo','bestbuy','bing','blackstone','blogger','blogspot','bnpparibas','boeing',
