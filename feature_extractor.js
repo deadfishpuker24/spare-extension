@@ -18,7 +18,32 @@ const BRANDS = ['accenture','adidas','adobe','alibaba','amazon','apple','audi','
                 'ibm','ikea','instagram','intel','linkedin','mcdonalds','microsoft',
                 'netflix','nike','oracle','paypal','pepsi','samsung','shell','sony',
                 'spotify','starbucks','target','tesla','twitter','ups','visa','walmart',
-                'wikipedia','yahoo','youtube'];
+                'wikipedia','yahoo','youtube',
+              
+                //ADDED FROM brands.txt LIST
+                'activisionblizzard','adultfriendfinder','akamai','aliexpress','alipay',
+                'allianz','alphabet','americanairlines','americanexpress','americantower',
+                'apache','autodesk','badoo','baidu','bankofamerica','bankofchina','barclays','bbva',
+                'bebo','bestbuy','bing','blackstone','blogger','blogspot','bnpparibas','boeing',
+                'broadcom','burberry','caesars','cardinalhealth','carmax','carters',
+                'caterpillar','cinemark','colgate','columbiasportswear','continental',
+                'deltaairlines','deutschebank','dolby','dominos','dreamworks',
+                'eastmankodak','edison','electronicarts','equifax','equinix','expedia',
+                'flickr','footlocker','fossil','foxconn','fujitsu','gap',
+                'gartner','gigamedia','gillette','globalpayments','goodyear',
+                'harley-davidson','hewlettpackard','hilton','hiltonworldwide','honda',
+                'huawei','hyundai','imdb','imgur','ingbank','jackdaniels','jnj','jpmorgan',
+                'jpmorganchase','kfc','lego','lenovo','loreal','louisvuitton','mastercard',
+                'mckesson','mckinsey','mercedes-benz','mini','mitsubishi','morganstanley',
+                'motorola','mtv','myspace','nescafe','nestle','nintendo','nissan',
+                'nvidia','nytimes','panasonic','pinterest','porsche','prada',
+                'reddit','royalbankofcanada','scotiabank','siemens','skype',
+                'snapchat','soundcloud','spiritairlines','sprite','stackexchange',
+                'stackoverflow','swatch','swift','symantec','target','telegram','tiffany',
+                'tinder','toyota','tripadvisor','tumblr','twitch','underarmour',
+                'unilever','universal','verizon','viber','volkswagen','volvocars','wechat',
+                'weibo','whatsapp','wordpress','yandex','zara','zebra','icloud','itunes'
+              ];
 
 class FeatureExtractor {
   constructor(url, dom = null) {
