@@ -1,143 +1,146 @@
-// Background service worker - communicates with Flask API and DAVSS
+// background.js — final clean version
 
-import { calculateDavssScore } from './davssService.js';
-import { TRUSTED_DOMAINS } from './data/trustedList.js';
+import { analyzeDomain } from "./offpage.js";
+import { calculateDavssScore } from "./davssService.js";
+import { isDomainWhitelisted, getRootDomain } from "./utils/domainUtils.js";
 
-const API_URL = 'http://localhost:5000';
+let latestFeatures = null;
+let latestOffPage = null;
+let latestDavss = null;
 
-// Helper: Check whitelist to skip expensive visual analysis
-function isWhitelisted(url) {
-  try {
-    const hostname = new URL(url).hostname;
-    // Simple check: is the hostname (or root) in the set?
-    // This handles basic cases. For complex subdomains, strict matching is used here.
-    const parts = hostname.split('.');
-    const root = parts.slice(-2).join('.'); // simple root extraction
-    return TRUSTED_DOMAINS.has(hostname) || TRUSTED_DOMAINS.has(root);
-  } catch (e) {
-    return false;
-  }
-}
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
-// Check API health on startup
-async function checkAPIHealth() {
-  try {
-    const response = await fetch(`${API_URL}/health`);
-    const data = await response.json();
-    console.log('✅ API Health:', data);
-    return data.model_loaded;
-  } catch (error) {
-    console.error('❌ API not reachable:', error.message);
-    return false;
-  }
-}
-
-// Check on install
-chrome.runtime.onInstalled.addListener(() => {
-  console.log('Extension installed');
-  checkAPIHealth();
-});
-
-// Message handler
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  
-  // --- EXISTING HANDLERS ---
-  if (request.action === 'analyzeURL') {
-    analyzeURL(request.url, request.features)
-      .then(result => sendResponse(result))
-      .catch(error => sendResponse({ error: error.message }));
-    return true; // Keep channel open
-  }
-  
-  if (request.action === 'getStatus') {
-    checkAPIHealth()
-      .then(ready => sendResponse({ 
-        modelLoaded: ready,
-        ready: ready,
-        apiUrl: API_URL
-      }))
-      .catch(error => sendResponse({ 
-        modelLoaded: false,
-        ready: false,
-        error: error.message
-      }));
+  // ----- STORE ON-PAGE FEATURES -----
+  if (msg.type === "phiusiil_features") {
+    latestFeatures = msg.data;
+    chrome.storage.local.set({ latestFeatures: msg.data });
+    sendResponse({ status: "stored" });
     return true;
   }
 
-  // --- NEW VISUAL ANALYSIS HANDLER ---
-  if (request.action === 'run_davss_analysis') {
-    const { tabId, url } = request;
+  // ----- RETURN ON-PAGE FEATURES -----
+  if (msg.type === "get_latest_features") {
+    sendResponse({ features: latestFeatures });
+    return true;
+  }
 
-    // 1. Check whitelist first to save API credits
-    if (isWhitelisted(url)) {
-      console.log(`[DAVSS] ${url} is whitelisted. Skipping visual check.`);
-      sendResponse({ 
-        davss: { 
-          status: "Safe", 
-          whitelisted: true, 
-          similarityScore: 0,
-          confidenceScore: 1.0,
-          trueDomain: new URL(url).hostname 
-        } 
+  // ----- RUN OFF-PAGE ANALYSIS (RDAP) -----
+  if (msg.type === "run_offpage_analysis") {
+    const url = msg.url || sender.tab?.url;
+    const domain = msg.domain || (url ? getRootDomain(url) : "");
+    
+    // Check whitelist first
+    if (url && isDomainWhitelisted(url)) {
+      const rootDomain = getRootDomain(url);
+      console.log(`[Whitelist] Domain ${rootDomain} is trusted. Skipping off-page analysis.`);
+      
+      // Set badge to Safe (Green) for whitelisted domains
+      const tabId = sender.tab?.id;
+      if (tabId) {
+        chrome.action.setBadgeText({ text: '✓', tabId: tabId });
+        chrome.action.setBadgeBackgroundColor({ color: '#00ff00', tabId: tabId });
+      }
+      
+      const whitelistedResult = {
+        whitelisted: true,
+        domain: rootDomain,
+        status: "Safe",
+        message: "Domain is in trusted whitelist"
+      };
+      latestOffPage = whitelistedResult;
+      chrome.storage.local.set({ offpage_results: whitelistedResult });
+      sendResponse({ offpage: whitelistedResult });
+      return true;
+    }
+    
+    const cleanDomain = (domain || "").toLowerCase().replace(/^www\./, "");
+    if (!cleanDomain) {
+      sendResponse({
+        offpage: { error: true, reason: "Empty domain" }
       });
       return true;
     }
 
-    // 2. Run Analysis
-    console.log(`[DAVSS] Starting visual analysis for ${url}`);
+    analyzeDomain(cleanDomain)
+      .then(result => {
+        latestOffPage = result;
+        chrome.storage.local.set({ offpage_results: result });
+        sendResponse({ offpage: result });
+      })
+      .catch(err => {
+        latestOffPage = { error: true, reason: "RDAP lookup failed" };
+        sendResponse({ offpage: latestOffPage });
+      });
+
+    return true; // keep message channel open for async response
+  }
+
+  // ----- RETURN LAST OFF-PAGE RESULT -----
+  if (msg.type === "get_offpage_results") {
+    sendResponse({ offpage: latestOffPage });
+    return true;
+  }
+
+  // ----- RUN DAVSS ANALYSIS -----
+  if (msg.type === "run_davss_analysis") {
+    const tabId = msg.tabId || sender.tab?.id;
+    const url = msg.url || sender.tab?.url;
+
+    if (!tabId || !url) {
+      console.error("[DAVSS] Missing tabId or url", { tabId, url });
+      sendResponse({
+        davss: { error: true, errorMessage: "Missing tabId or url" }
+      });
+      return true;
+    }
+
+    // Check whitelist first - skip expensive DAVSS analysis if trusted
+    if (isDomainWhitelisted(url)) {
+      const rootDomain = getRootDomain(url);
+      console.log(`[Whitelist] Domain ${rootDomain} is trusted. Skipping DAVSS analysis.`);
+      
+      // Set badge to Safe (Green) for whitelisted domains
+      chrome.action.setBadgeText({ text: '✓', tabId: tabId });
+      chrome.action.setBadgeBackgroundColor({ color: '#00ff00', tabId: tabId });
+      
+      const whitelistedResult = {
+        similarityScore: 0,
+        confidenceScore: 1.0,
+        currentDomain: rootDomain,
+        trueDomain: rootDomain,
+        frequencyCount: 0,
+        totalResults: 0,
+        error: false,
+        errorMessage: null,
+        whitelisted: true,
+        status: "Safe"
+      };
+      latestDavss = whitelistedResult;
+      chrome.storage.local.set({ davss_results: whitelistedResult });
+      sendResponse({ davss: whitelistedResult });
+      return true;
+    }
+
+    console.log("[DAVSS] Starting analysis", { tabId, url });
     calculateDavssScore(tabId, url)
       .then(result => {
+        console.log("[DAVSS] Analysis complete", result);
+        latestDavss = result;
+        chrome.storage.local.set({ davss_results: result });
         sendResponse({ davss: result });
       })
       .catch(err => {
-        console.error("DAVSS Error:", err);
-        sendResponse({ davss: { error: true, errorMessage: err.message } });
+        console.error("[DAVSS] Analysis failed", err);
+        latestDavss = { error: true, errorMessage: `DAVSS analysis failed: ${err.message}` };
+        sendResponse({ davss: latestDavss });
       });
-      
-    return true; // Keep channel open
+
+    return true; // keep message channel open for async response
+  }
+
+  // ----- RETURN LAST DAVSS RESULT -----
+  if (msg.type === "get_davss_results") {
+    sendResponse({ davss: latestDavss });
+    return true;
   }
 });
-
-async function analyzeURL(url, features) {
-  try {
-    const cacheKey = `result_${url}`;
-    const cached = await chrome.storage.local.get(cacheKey);
-    
-    if (cached[cacheKey]) {
-      const age = Date.now() - cached[cacheKey].timestamp;
-      if (age < 60 * 60 * 1000) {
-        return cached[cacheKey];
-      }
-    }
-
-    const response = await fetch(`${API_URL}/analyze`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: url, features: features })
-    });
-
-    if (!response.ok) throw new Error('API request failed');
-
-    const result = await response.json();
-    
-    const cacheData = {
-      isPhishing: result.is_phishing,
-      confidence: result.confidence,
-      suspiciousFeatures: result.suspicious_features || [],
-      riskLevel: result.risk_level,
-      timestamp: Date.now()
-    };
-    
-    await chrome.storage.local.set({ [cacheKey]: cacheData });
-    return cacheData;
-
-  } catch (error) {
-    return {
-      error: `API Error: ${error.message}`,
-      isPhishing: false,
-      confidence: 0,
-      suspiciousFeatures: [],
-      riskLevel: 'UNKNOWN'
-    };
-  }
-}
