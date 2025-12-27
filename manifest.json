@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "S.P.A.R.E Extension",
+  "version": "1.0.0",
+  "description": "Extension for real-time browser phishing detection.",
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "storage",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "http://localhost:5000/*",
+    "https://api.imgbb.com/*",
+    "https://serpapi.com/*"
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  }
+}
