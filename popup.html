@@ -13,6 +13,36 @@
       <p id="status-line">Analyzing...</p>
     </div>
 
+    <!-- Unified Score Display (New) -->
+    <div class="score-display">
+      <div class="score-ring">
+        <svg viewBox="0 0 200 200" class="score-svg">
+          <circle cx="100" cy="100" r="85" class="score-bg"></circle>
+          <circle id="score-progress" cx="100" cy="100" r="85" class="score-ring-fill"></circle>
+        </svg>
+        <div class="score-text">
+          <div id="score-value" class="score-number">0</div>
+          <div class="score-label">PHISHING RISK</div>
+        </div>
+      </div>
+      
+      <!-- Module Breakdown -->
+      <div class="module-scores">
+        <div class="module-item">
+          <span class="module-label">ON-PAGE</span>
+          <span id="onpage-score" class="module-value">--</span>
+        </div>
+        <div class="module-item">
+          <span class="module-label">VISUAL</span>
+          <span id="visual-score" class="module-value">--</span>
+        </div>
+        <div class="module-item">
+          <span class="module-label">OFF-PAGE</span>
+          <span id="offpage-score" class="module-value">--</span>
+        </div>
+      </div>
+    </div>
+
     <!-- Main Result -->
     <div id="result-card" class="result-card">
       <h2 id="result-title">SCANNING</h2>
@@ -34,6 +64,7 @@
       <button class="tab-btn" data-tab="features">FEATURES</button>
       <button class="tab-btn" data-tab="offpage">OFF-PAGE</button>
       <button class="tab-btn" data-tab="visual">VISUAL</button>
+      <button class="tab-btn" data-tab="raw">RAW</button>
     </div>
 
     <!-- Tab Content -->
@@ -69,6 +100,31 @@
           <pre id="visual-output" class="code-block">...</pre>
         </div>
       </div>
+
+      <!-- Raw Tab (NEW) -->
+      <div id="raw-tab" class="tab-pane">
+        <div class="section">
+          <div class="section-title">WEIGHT OPTIMIZER RAW DATA</div>
+          <pre id="raw-output" class="code-block">...</pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- User Feedback Section (New) -->
+    <div class="feedback-section">
+      <div class="section-title">HELP US LEARN</div>
+      <p class="feedback-prompt">Was this site actually phishing?</p>
+      <div class="feedback-buttons">
+        <button id="feedback-phishing" class="feedback-btn danger">
+          <span class="btn-icon">⚠️</span>
+          PHISHING
+        </button>
+        <button id="feedback-safe" class="feedback-btn safe">
+          <span class="btn-icon">✓</span>
+          SAFE
+        </button>
+      </div>
+      <p id="feedback-status" class="feedback-status"></p>
     </div>
 
     <!-- Actions -->
@@ -76,6 +132,7 @@
   </div>
 
   <script src="feature_extractor.js"></script>
+  <script src="weightOptimizer.js"></script>
   <script type="module" src="offpage.js"></script>
   <script src="popup.js"></script>
 </body>
