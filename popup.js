@@ -1,4 +1,4 @@
-// Popup script - Integrated scoring system with online learning
+// popup.js - Modified to handle N/A visual scores properly
 
 let analysisData = {
   prediction: null,
@@ -265,14 +265,28 @@ async function analyzeOffpage(domain) {
 }
 
 function extractVisualScore(davssData) {
-  if (!davssData || davssData.error) return null;
+  if (!davssData || davssData.error) {
+    console.log('[Visual Score] Error or no data returned');
+    return null;
+  }
   
-  // Convert DAVSS result to 0-1 score
+  // CRITICAL FIX: Check for N/A trueDomain (inconclusive results)
+  // This happens when DAVSS can't determine the true domain
+  if (!davssData.trueDomain || davssData.trueDomain === 'N/A' || davssData.trueDomain === null) {
+    console.warn('[Visual Score] No trueDomain detected - returning N/A');
+    return null; // Signal that visual analysis was inconclusive
+  }
+  
   // If whitelisted, score = 0 (safe)
-  if (davssData.whitelisted) return 0;
+  if (davssData.whitelisted) {
+    console.log('[Visual Score] Domain is whitelisted - score = 0');
+    return 0;
+  }
   
   // Otherwise use similarity score (already 0-1)
-  return davssData.similarityScore || 0;
+  const score = davssData.similarityScore || 0;
+  console.log('[Visual Score] Similarity score:', score);
+  return score;
 }
 
 function updateUnifiedScore() {
@@ -461,6 +475,19 @@ function displayVisuals(davssData) {
     return;
   }
 
+  // CRITICAL FIX: Check for N/A trueDomain
+  if (!davssData.trueDomain || davssData.trueDomain === 'N/A' || davssData.trueDomain === null) {
+    const report = {
+      "Status": "Inconclusive - Visual Analysis N/A",
+      "Reason": "Could not determine true domain from visual search",
+      "Current Domain": davssData.currentDomain || "N/A",
+      "Note": "Final score will be based on ML and Off-Page analysis only"
+    };
+    visualOutput.textContent = JSON.stringify(report, null, 2);
+    visualOutput.style.color = "orange";
+    return;
+  }
+
   const isSuspicious = davssData.similarityScore > 0;
   const statusColor = isSuspicious ? "red" : "green";
 
@@ -510,7 +537,7 @@ function displayRawData(scores, unifiedScore) {
   const rawData = {
     "Raw Module Scores": {
       "on_page": onPage !== null ? onPage.toFixed(4) : "NULL",
-      "visual": visual !== null ? visual.toFixed(4) : "NULL",
+      "visual": visual !== null ? visual.toFixed(4) : "NULL (N/A - Inconclusive)",
       "off_page": offPage !== null ? offPage.toFixed(4) : "NULL"
     },
     "Current Weights": {
@@ -518,7 +545,8 @@ function displayRawData(scores, unifiedScore) {
       "visual": weights.visual.toFixed(4),
       "off_page": weights.off_page.toFixed(4)
     },
-    "Calculation Breakdown": contributions,
+    "Active Modules": validScores.map(s => s.name).join(', ') || 'None',
+    "Calculation Breakdown": contributions.length > 0 ? contributions : "No valid scores available",
     "Unified Score": unifiedScore.toFixed(4),
     "Unified Score (%)": (unifiedScore * 100).toFixed(2) + "%",
     "Model Status": {
