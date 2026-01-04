@@ -15,7 +15,9 @@
  * API Keys - TODO: Store these in chrome.storage.local for better security
  */
 const IMGBB_API_KEY = 'fd7077fb381de903b0f53d11e0269a07';
-const SERPAPI_KEY = '081207b3c5172c4c497812a945b99718c9aebe553d19b09085ece1884dd5e9df';
+//const SERPAPI_KEY = '081207b3c5172c4c497812a945b99718c9aebe553d19b09085ece1884dd5e9df';
+//use above key again in a month
+const SERPAPI_KEY = 'af54b86e7272726271820455c44ba5f9a51918e10b47f6f4c6726bae1901c2c9';
 
 /**
  * Configuration for Weighted Evidence Pipeline
@@ -137,74 +139,6 @@ function parseUrlDetails(urlStr) {
     console.warn('[DAVSS] Error parsing URL:', urlStr, e);
     return { isValid: false };
   }
-}
-
-/**
- * Weighted Evidence Pipeline - Helper 2: Signal Extraction
- * 
- * Analyzes visual matches and extracts evidence signals instead of calculating scores.
- * This decouples detection from scoring, making logic more maintainable.
- * 
- * @param {Array} visualMatches - Array of visual match results from SerpApi
- * @param {Object} currentDetails - Parsed details of current URL
- * @returns {Object} - Signal object with evidence flags
- */
-function extractSignals(visualMatches, currentDetails) {
-  const signals = {
-    foundPriorityBrand: false,     // Did we see a high-profile brand (PayPal, Instagram)?
-    visualDomainMatch: false,      // Does current domain appear in results?
-    titleKeywordMatch: false,      // Do result titles mention current brand?
-    detectedTrueDomain: null,      // Best candidate for the "real" domain
-    priorityBrandName: null,       // Name of priority brand found
-    totalMatches: visualMatches.length
-  };
-
-  const { brand: currentBrand, hostname: currentHost } = currentDetails;
-
-  console.log('[DAVSS] 🔍 Extracting signals for brand:', currentBrand);
-
-  // Scan all visual matches for evidence
-  for (const match of visualMatches) {
-    const link = match.link || match.source || '';
-    const title = (match.title || '').toLowerCase();
-
-    if (!link) continue;
-
-    const resultDetails = parseUrlDetails(link);
-    if (!resultDetails.isValid) continue;
-
-    const resultDomain = resultDetails.hostname;
-    const resultBrand = resultDetails.brand;
-
-    // Skip noisy domains (they don't count as "candidates")
-    if (CONFIG.NOISY_DOMAINS.has(resultDomain)) {
-      console.log('[DAVSS] Skipping noisy domain:', resultDomain);
-      continue;
-    }
-
-    // SIGNAL A: Direct Domain Match
-    if (resultDomain === currentHost) {
-      signals.visualDomainMatch = true;
-      console.log('[DAVSS] ✓ Visual Domain Match:', resultDomain);
-    }
-
-    // SIGNAL B: Priority Brand Detection (Expert Witness)
-    if (CONFIG.PRIORITY_BRANDS.has(resultBrand)) {
-      signals.foundPriorityBrand = true;
-      signals.detectedTrueDomain = resultDomain;
-      signals.priorityBrandName = resultBrand;
-      console.log('[DAVSS] 🎯 Priority Brand Detected:', resultBrand, '→', resultDomain);
-    }
-
-    // SIGNAL C: Title Keyword Match (Contextual Validation)
-    if (title && title.includes(currentBrand)) {
-      signals.titleKeywordMatch = true;
-      console.log('[DAVSS] ✓ Title mentions current brand:', title);
-    }
-  }
-
-  console.log('[DAVSS] Signal Summary:', signals);
-  return signals;
 }
 
 /**
@@ -1021,6 +955,7 @@ function calculateScore(visualMatches, currentDomain, textResults = [], knowledg
       similarityScore: -1,
       confidenceScore: 0,
       mostFrequentDomain: '',
+      trueDomain: null, // N/A
       frequencyCount: 0,
       totalResults: 0,
       error: true,
@@ -1028,428 +963,325 @@ function calculateScore(visualMatches, currentDomain, textResults = [], knowledg
     };
   }
 
-  // Step 1: Filter - Extract hostnames from the top 10 results
-  // Split into HighValueMatches (Clean) and LowValueMatches (Noisy)
+  // Step 1: Filter - Split into clean and noisy matches
   const topResults = visualMatches.slice(0, 10);
-  const cleanMatches = []; // HighValueMatches
-  const noisyMatches = []; // LowValueMatches
+  const cleanMatches = [];
+  const noisyMatches = [];
 
   for (const match of topResults) {
     let domain = '';
-
-    // Try to extract domain from 'link' field
+    
     if (match.link) {
       try {
         const url = new URL(match.link);
         domain = url.hostname;
       } catch (error) {
-        // If URL parsing fails, try string manipulation
         const matchResult = match.link.match(/https?:\/\/([^\/]+)/);
-        if (matchResult) {
-          domain = matchResult[1];
-        }
+        if (matchResult) domain = matchResult[1];
       }
     }
-
-    // If no domain from 'link', try 'source' field
+    
     if (!domain && match.source) {
       try {
         const url = new URL(match.source);
         domain = url.hostname;
       } catch (error) {
         const matchResult = match.source.match(/https?:\/\/([^\/]+)/);
-        if (matchResult) {
-          domain = matchResult[1];
-        }
+        if (matchResult) domain = matchResult[1];
       }
     }
-
-    // Standardize domain
+    
     if (domain) {
       const standardizedDomain = standardizeDomain(domain);
-
-      // Separate into clean and noisy buckets
       if (NOISY_DOMAINS.has(standardizedDomain)) {
-        noisyMatches.push(standardizedDomain);
+        noisyMatches.push({
+          domain: standardizedDomain,
+          title: match.title || '',
+          link: match.link || match.source || ''
+        });
       } else {
-        cleanMatches.push(standardizedDomain);
+        cleanMatches.push({
+          domain: standardizedDomain,
+          title: match.title || '',
+          link: match.link || match.source || ''
+        });
       }
     }
   }
 
-  // Debug logging
-  console.log('[DAVSS] Clean Matches Found:', cleanMatches);
-  console.log('[DAVSS] Noisy Matches Found:', noisyMatches);
+  console.log('[DAVSS] Clean Matches:', cleanMatches.length);
+  console.log('[DAVSS] Noisy Matches:', noisyMatches.length);
 
-  // Step 2: Select Winner - Initialize domainList explicitly to prevent ReferenceError
-  let domainList = [];
-  let analysisSource = '';
-
-  if (cleanMatches.length > 0) {
-    // Scenario A: Use clean matches (ignore noisy platforms)
-    console.log('[DAVSS] Using Clean Matches (High Priority):', cleanMatches);
-    domainList = cleanMatches;
-    analysisSource = 'clean';
-  } else if (noisyMatches.length > 0) {
-    // Scenario B: Only noisy matches available (social media/design site phishing case)
-    console.log('[DAVSS] Only Noisy Matches Found (Fallback):', noisyMatches);
-    domainList = noisyMatches;
-    analysisSource = 'noisy';
-  } else {
-    // No valid domains found
+  // **FIX #1: If ZERO clean matches, return N/A instead of using noisy domains**
+  if (cleanMatches.length === 0) {
+    console.warn('[DAVSS] ❌ NO CLEAN MATCHES FOUND - Only noisy domains detected');
+    console.warn('[DAVSS] Noisy domains found:', noisyMatches.map(m => m.domain));
+    
+    // Check if noisy matches mention current brand in titles (company profiles case)
+    const currentBrandName = extractBrandName(currentUrl);
+    if (currentBrandName && noisyMatches.length > 0) {
+      // Use fuzzy matching for brand in title
+      const brandMentioned = noisyMatches.some(match => 
+        fuzzyBrandMatch(match.title, currentBrandName)
+      );
+      
+      if (brandMentioned) {
+        console.log('[DAVSS] ✓ SOCIAL PROFILE DETECTED - Brand mentioned in noisy results');
+        return {
+          similarityScore: 0,
+          confidenceScore: 1.0,
+          mostFrequentDomain: noisyMatches[0].domain,
+          trueDomain: noisyMatches[0].domain,
+          frequencyCount: noisyMatches.length,
+          totalResults: noisyMatches.length,
+          textMatchScore: -1,
+          brandKeywords: [],
+          textThreatDetected: false,
+          error: false,
+          errorMessage: null,
+          safetyOverride: 'social_profile'
+        };
+      }
+    }
+    
+    // Otherwise return N/A
     return {
       similarityScore: -1,
       confidenceScore: 0,
-      mostFrequentDomain: '',
+      mostFrequentDomain: noisyMatches.length > 0 ? noisyMatches[0].domain : '',
+      trueDomain: null, // **N/A - Visual analysis inconclusive**
       frequencyCount: 0,
       totalResults: topResults.length,
-      error: true,
-      errorMessage: 'No valid domains found in visual matches'
+      textMatchScore: -1,
+      brandKeywords: [],
+      textThreatDetected: false,
+      error: false,
+      errorMessage: null,
+      warning: 'Only noisy domains found (social media/design sites) - Cannot determine true domain'
     };
   }
 
-  // **SAFETY CHECK #1: "Anywhere Match" (False Positive Prevention)**
-  // Before declaring a mismatch, check if the current brand appears ANYWHERE in the clean matches
-  // Example: If we're on sbi.bank.in and "sbi.co.in" appears in result #5, it's still safe
-  // This prevents false positives from tech news sites winning with low confidence
-  if (cleanMatches.length > 0) {
-    const currentBrand = extractBrand(extractRootDomain(currentDomain));
-    console.log('[DAVSS] Safety Check: Current Brand:', currentBrand);
+  // Step 2: Use ONLY clean matches for analysis
+  const domainList = cleanMatches.map(m => m.domain);
+  console.log('[DAVSS] Using Clean Matches:', domainList);
 
-    // Check if current brand appears in ANY of the clean match domains
-    for (const matchDomain of cleanMatches) {
-      const matchBrand = extractBrand(extractRootDomain(matchDomain));
-      if (matchBrand === currentBrand) {
-        console.log('[DAVSS] ✓ ANYWHERE MATCH FOUND:', matchDomain);
-        console.log('[DAVSS] Current brand appears in visual results - Site is SAFE');
+  // **SAFETY CHECK #1: "Anywhere Match" - Check if current brand appears in ANY clean match**
+  const currentBrand = extractBrand(extractRootDomain(currentDomain));
+  console.log('[DAVSS] 🔍 Current Brand:', currentBrand);
+
+  for (const match of cleanMatches) {
+    const matchBrand = extractBrand(extractRootDomain(match.domain));
+    if (matchBrand === currentBrand) {
+      console.log('[DAVSS] ✓ ANYWHERE MATCH FOUND:', match.domain);
+      return {
+        similarityScore: 0,
+        confidenceScore: 1.0,
+        mostFrequentDomain: match.domain,
+        trueDomain: match.domain,
+        frequencyCount: cleanMatches.filter(m => extractBrand(extractRootDomain(m.domain)) === currentBrand).length,
+        totalResults: cleanMatches.length,
+        textMatchScore: -1,
+        brandKeywords: [],
+        textThreatDetected: false,
+        error: false,
+        errorMessage: null,
+        safetyOverride: 'anywhere_match'
+      };
+    }
+  }
+
+  // **SAFETY CHECK #2: Title Verification with Fuzzy Matching**
+  const currentBrandName = extractBrandName(currentUrl);
+  if (currentBrandName) {
+    for (const match of cleanMatches) {
+      if (fuzzyBrandMatch(match.title, currentBrandName)) {
+        console.log('[DAVSS] ✓ FUZZY TITLE MATCH:', match.title);
         return {
-          similarityScore: 0,  // Safe - brand confirmed
-          confidenceScore: 1.0, // Override to high confidence
-          mostFrequentDomain: matchDomain,
-          frequencyCount: cleanMatches.filter(d => extractBrand(extractRootDomain(d)) === currentBrand).length,
+          similarityScore: 0,
+          confidenceScore: 1.0,
+          mostFrequentDomain: match.domain,
+          trueDomain: match.domain,
+          frequencyCount: cleanMatches.length,
           totalResults: cleanMatches.length,
           textMatchScore: -1,
           brandKeywords: [],
           textThreatDetected: false,
           error: false,
           errorMessage: null,
-          safetyOverride: 'anywhere_match' // Indicates this was caught by safety check
+          safetyOverride: 'title_match'
         };
       }
     }
-    console.log('[DAVSS] No anywhere match found - proceeding with winner selection');
   }
 
-
-  // Step 3: PRIORITY DOMAIN CHECK (The "Expert Witness" Override)
-  // If ANY high-risk brand (Instagram, PayPal, etc.) appears in results (even once),
-  // immediately select it as TrueDomain with artificial high confidence (1.0)
-
+  // Step 3: Priority Domain Check
   let mostFrequentDomain = '';
   let maxCount = 0;
   let isPriorityMatch = false;
 
-  // **CHECK 1: Scan for Priority Domains (High-Risk Brands)**
-  console.log('[DAVSS] Scanning for priority domains (high-risk brands)...');
-
-  for (const domain of domainList) {
-    if (!domain) continue;
-
-    // Extract root domain for comparison
-    const rootDomain = extractRootDomain(domain);
-
-    // Check if this domain is in the priority list
+  for (const match of cleanMatches) {
+    const rootDomain = extractRootDomain(match.domain);
     if (PRIORITY_DOMAINS.has(rootDomain)) {
-      console.log('[DAVSS] 🎯 PRIORITY DOMAIN DETECTED:', rootDomain);
-      console.log('[DAVSS] This is a high-risk brand - using as TrueDomain with MAX confidence');
-
-      mostFrequentDomain = domain;
-      maxCount = domainList.filter(d => extractRootDomain(d) === rootDomain).length;
+      console.log('[DAVSS] 🎯 PRIORITY DOMAIN:', rootDomain);
+      mostFrequentDomain = match.domain;
+      maxCount = cleanMatches.filter(m => extractRootDomain(m.domain) === rootDomain).length;
       isPriorityMatch = true;
-      break; // Stop searching - priority match found
+      break;
     }
   }
 
-  // **CHECK 2: Fallback to Frequency-Based Selection (Unknown Brands)**
+  // Step 4: Frequency-Based Selection (if no priority match)
   if (!isPriorityMatch) {
-    console.log('[DAVSS] No priority domains found - using frequency-based selection');
-
-    // Calculate frequency map for non-priority domains
     const frequencyMap = {};
-    for (const domain of domainList) {
-      if (domain) {
-        frequencyMap[domain] = (frequencyMap[domain] || 0) + 1;
-      }
+    for (const match of cleanMatches) {
+      frequencyMap[match.domain] = (frequencyMap[match.domain] || 0) + 1;
     }
-
-    // Find most frequent domain
+    
     for (const [domain, count] of Object.entries(frequencyMap)) {
       if (count > maxCount) {
         maxCount = count;
         mostFrequentDomain = domain;
       }
     }
-
-    console.log('[DAVSS] Selected True Domain (frequency-based):', mostFrequentDomain, `(${maxCount} matches)`);
-  } else {
-    console.log('[DAVSS] Selected True Domain (priority match):', mostFrequentDomain, `(${maxCount} matches)`);
   }
 
-
-  // Step 4: Handle "Zero Clean Results" - Design Clone Detection
-  // If domainList is mostly design sites and confidence is low, return neutral score
-  const designSites = ['figma.com', 'dribbble.com', 'behance.net', 'deviantart.com',
-    'artstation.com', 'canva.com', 'webflow.io'];
-  const isDesignSite = designSites.some(site => mostFrequentDomain.includes(site));
-  const isLowConfidence = maxCount <= 1 && domainList.length <= 2;
-
-  if (analysisSource === 'noisy' && isDesignSite && isLowConfidence) {
-    console.warn('[DAVSS] Suspected Design Clone detected. Returning neutral score.');
-    return {
-      similarityScore: 0.5, // Neutral score
-      confidenceScore: 0.3, // Low confidence
-      mostFrequentDomain: mostFrequentDomain,
-      frequencyCount: maxCount,
-      totalResults: domainList.length,
-      error: false,
-      errorMessage: null,
-      warning: 'Suspected Design Clone - Results may be from design template sites'
-    };
-  }
-
-  // Calculate confidence score
-  let confidenceScore = maxCount / domainList.length;
-
-  // **PRIORITY MATCH OVERRIDE**: If this is a high-risk brand, give it artificial high confidence
-  // Even 1 match for Instagram/PayPal is more trustworthy than 5 matches for unknown blogs
+  // **FIX #3: Better Confidence Threshold Logic**
+  let confidenceScore = maxCount / cleanMatches.length;
+  
   if (isPriorityMatch) {
-    console.log('[DAVSS] Priority match detected - overriding confidence to 1.0');
-    confidenceScore = 1.0; // Artificial high confidence for priority domains
+    confidenceScore = 1.0; // Override for priority brands
   }
 
-  // **SAFETY CHECK #2: Minimum Confidence Threshold (False Positive Prevention)**
-  // If the "winner" only appears in <40% of results, the data is too weak to trust
-  // Example: 1 match out of 8 results = 0.125 confidence - could be random noise
-  const MIN_CONFIDENCE_THRESHOLD = 0.40;
-
-  // NOTE: This check is SKIPPED for priority matches (already handled above with 1.0 confidence)
+  const MIN_CONFIDENCE_THRESHOLD = 0.30; // Lowered from 0.40
+  
+  // **NEW LOGIC: Only return N/A if confidence is LOW AND it's not a priority match**
   if (!isPriorityMatch && confidenceScore < MIN_CONFIDENCE_THRESHOLD) {
-    console.warn(`[DAVSS] ⚠️ CONFIDENCE TOO LOW (${confidenceScore.toFixed(2)} < ${MIN_CONFIDENCE_THRESHOLD})`);
-    console.warn('[DAVSS] Visual match too weak. Defaulting to SAFE to prevent false positive.');
+    console.warn(`[DAVSS] ⚠️ CONFIDENCE TOO LOW (${confidenceScore.toFixed(2)})`);
+    console.warn('[DAVSS] Insufficient data - returning N/A');
     return {
-      similarityScore: 0,  // Safe - insufficient data
+      similarityScore: -1,
       confidenceScore: confidenceScore,
       mostFrequentDomain: mostFrequentDomain,
+      trueDomain: null, // **N/A - Confidence too low**
       frequencyCount: maxCount,
-      totalResults: domainList.length,
+      totalResults: cleanMatches.length,
       textMatchScore: -1,
       brandKeywords: [],
       textThreatDetected: false,
       error: false,
       errorMessage: null,
-      safetyOverride: 'low_confidence' // Indicates this was caught by confidence check
+      safetyOverride: 'low_confidence'
     };
   }
 
-  console.log('[DAVSS] Confidence check passed:', confidenceScore.toFixed(2));
-
-  // **STEP 5A: TITLE SAFETY CHECK (Entity Verification)**
-  // Before comparing domains, check if any search result titles mention the current brand
-  // This prevents false positives when LinkedIn/Facebook profiles appear in results
-  // Example: "Delhivery | LinkedIn" contains "delhivery" → SAFE
-
-  const currentBrandName = extractBrandName(currentUrl);
-  console.log('[DAVSS] 🔍 Title Verification: Checking if results mention brand:', currentBrandName);
-
-  if (currentBrandName) {
-    // Scan ALL visual matches for title mentions
-    for (const match of visualMatches) {
-      const title = (match.title || '').toLowerCase();
-      const link = (match.link || match.source || '').toLowerCase();
-
-      // Check if title contains current brand name
-      if (title && title.includes(currentBrandName)) {
-        console.log('[DAVSS] ✓ TITLE MATCH FOUND:', match.title);
-        console.log('[DAVSS] Search results mention current brand - Site is SAFE');
-        console.log('[DAVSS] This is likely a social media profile or news article about the brand');
-
-        return {
-          similarityScore: 0,  // Safe - brand mentioned in results
-          confidenceScore: 1.0,
-          mostFrequentDomain: extractRootDomain(link) || mostFrequentDomain,
-          frequencyCount: maxCount,
-          totalResults: domainList.length,
-          textMatchScore: -1,
-          brandKeywords: [],
-          textThreatDetected: false,
-          error: false,
-          errorMessage: null,
-          safetyOverride: 'title_match' // Indicates title verification triggered
-        };
-      }
-
-      // Also check if link domain matches current (backup check)
-      if (link && link.includes(currentDomain)) {
-        console.log('[DAVSS] ✓ DOMAIN MATCH in search results');
-        return {
-          similarityScore: 0,
-          confidenceScore: 1.0,
-          mostFrequentDomain: currentDomain,
-          frequencyCount: maxCount,
-          totalResults: domainList.length,
-          textMatchScore: -1,
-          brandKeywords: [],
-          textThreatDetected: false,
-          error: false,
-          errorMessage: null,
-          safetyOverride: 'domain_in_results'
-        };
-      }
-    }
-
-    console.log('[DAVSS] No title match found for brand:', currentBrandName);
-  }
-
-  // Step 5: Security-grade domain comparison using root domain and brand extraction
-  // Extract root domains for both current and most frequent
+  // Step 5: Domain Comparison
   const currentRoot = extractRootDomain(currentDomain);
   const trueRoot = extractRootDomain(mostFrequentDomain);
-
-  // Extract brand names for brand-based comparison (allows cross-TLD matches)
   const brandCurrent = extractBrand(currentRoot);
   const brandTrue = extractBrand(trueRoot);
-
-  // Extract TLD from current domain for whitelist checking
   const currentTLD = extractTLD(currentRoot);
 
-  console.log('[DAVSS] Current Root Domain:', currentRoot, '| Brand:', brandCurrent, '| TLD:', currentTLD);
-  console.log('[DAVSS] True Root Domain:', trueRoot, '| Brand:', brandTrue);
+  console.log('[DAVSS] Current:', currentRoot, '| Brand:', brandCurrent);
+  console.log('[DAVSS] True:', trueRoot, '| Brand:', brandTrue);
 
-  // **STEP 5B: PLATFORM FILTER (LinkedIn/Facebook Profile Detection)**
-  // If the visual winner is a "platform" domain (LinkedIn, Facebook, etc.),
-  // check if current site is mimicking the platform login, or just has a profile there
-
-  const isPlatformWinner = PLATFORM_DOMAINS.has(trueRoot);
-
-  if (isPlatformWinner) {
-    console.log('[DAVSS] 🌐 Winner is a PLATFORM domain:', trueRoot);
-    console.log('[DAVSS] Checking if current site mimics platform or just has a profile...');
-
-    // Extract clean brand names for comparison
-    const platformBrand = extractBrand(trueRoot); // e.g., "linkedin"
-
-    // Check if current domain is trying to mimic the platform
-    // e.g., "linkedln-login.com" or "secure-linkedin.com"
-    if (currentBrandName.includes(platformBrand)) {
-      // Current brand name contains platform name - likely phishing the platform itself
-      console.warn('[DAVSS] ⚠️ PLATFORM LOGIN MIMIC DETECTED!');
-      console.warn(`[DAVSS] Current site "${currentBrandName}" appears to mimic ${platformBrand}`);
-      // Don't return here - let it fall through to scoring logic
-    } else {
-      // Current brand does NOT contain platform name
-      // This is likely a company's social media profile, not phishing
-      // Example: delhivery.com has a LinkedIn profile
-      console.log('[DAVSS] ✓ PLATFORM PROFILE DETECTED (NOT phishing)');
-      console.log(`[DAVSS] Current brand "${currentBrandName}" is different from platform "${platformBrand}"`);
-      console.log('[DAVSS] This appears to be a legitimate business with a social media profile');
-
-      return {
-        similarityScore: 0,  // Safe - platform profile
-        confidenceScore: 1.0,
-        mostFrequentDomain: mostFrequentDomain,
-        frequencyCount: maxCount,
-        totalResults: domainList.length,
-        textMatchScore: -1,
-        brandKeywords: [],
-        textThreatDetected: false,
-        error: false,
-        errorMessage: null,
-        safetyOverride: 'platform_profile' // Indicates platform filter triggered
-      };
-    }
-  }
-
-  // Strict comparison: Check if brands match
-  // This allows amazon.co.uk to match amazon.com (same brand, different TLD)
   const brandsMatch = brandCurrent === brandTrue;
-
-  // **NEW DETECTION-BASED SCORING LOGIC**
-  // Instead of percentage-based scores, use a high baseline for any domain mismatch
   let similarityScore;
 
   if (brandsMatch) {
-    // Brands match - now check if TLD is safe
     if (SAFE_TLDS.has(currentTLD)) {
-      // Brand matches AND TLD is in safe list -> Safe
-      similarityScore = 0;
-      console.log('[DAVSS] Brand match with safe TLD:', currentTLD);
+      similarityScore = 0; // Safe
     } else {
-      // Brand matches BUT TLD is NOT in safe list -> Suspicious
-      similarityScore = 0.75;
-      console.warn(`[DAVSS] Suspicious TLD detected: .${currentTLD} for brand ${brandCurrent}`);
+      similarityScore = 0.75; // Suspicious TLD
     }
   } else {
-    // Brands don't match -> HIGH THREAT (Detection-Based Scoring)
-    // Base threat score: 0.85 (high baseline for any visual mismatch)
-    // Confidence bonus: up to +0.15 based on frequency
-    // Result: Even 2/8 match (0.25 confidence) = 0.85 + (0.25 * 0.15) = ~0.89
-    similarityScore = 0.85 + (confidenceScore * 0.15);
-    console.warn('[DAVSS] Brand mismatch detected (HIGH THREAT):', {
-      current: brandCurrent,
-      true: brandTrue,
-      confidenceScore: confidenceScore,
-      similarityScore: similarityScore
-    });
+    similarityScore = 0.85 + (confidenceScore * 0.15); // High threat
   }
 
-  // Step 6: OCR Text Verification (Override for Low Visual Confidence)
-  // Extract brand keywords from logo text and check if they appear in the current URL
+  // Step 6: OCR Text Verification
   const brandKeywords = extractBrandKeywords(textResults, knowledgeGraph);
   const urlCheck = checkBrandInURL(brandKeywords, currentUrl);
-
+  
   let textThreatDetected = false;
-  let textMatchScore = -1; // -1 = inconclusive (no text detected)
-
+  let textMatchScore = -1;
+  
   if (brandKeywords.length > 0) {
-    if (!urlCheck.found) {
-      // CRITICAL: Logo text says "Chase" but URL doesn't contain "chase"
-      // This is a strong indicator of brand impersonation
-      textThreatDetected = true;
-      textMatchScore = 0; // Text mismatch detected
-      console.error('[DAVSS] TEXT MISMATCH DETECTED (BRAND IMPERSONATION):', {
-        logoText: brandKeywords,
-        url: currentUrl,
-        textMatchScore: textMatchScore
-      });
-    } else {
-      // Logo text matches URL - good sign
-      textMatchScore = 1.0; // Text match confirmed
-      console.log('[DAVSS] Text verification passed:', urlCheck.matchedBrand);
+    textMatchScore = urlCheck.found ? 1.0 : 0;
+    textThreatDetected = !urlCheck.found;
+    
+    if (confidenceScore < 0.5 && textThreatDetected) {
+      console.warn('[DAVSS] ⚠️ TEXT OVERRIDE - Logo brand mismatch detected');
+      similarityScore = 0.95;
     }
-  } else {
-    console.log('[DAVSS] No brand text detected in logo - text verification inconclusive');
-  }
-
-  // **OVERRIDE LOGIC**: If visual confidence is low BUT text threat is detected
-  // This catches cases where visual matches are weak/noisy but logo text clearly shows different brand
-  if (confidenceScore < 0.5 && textThreatDetected) {
-    console.warn('[DAVSS] ⚠️ OVERRIDING visual score with text-based detection');
-    console.warn('[DAVSS] Logo contains brand text that does NOT match URL - HIGH THREAT');
-    similarityScore = 0.95; // Critical phishing - text contradiction overrides weak visual data
   }
 
   return {
     similarityScore,
     confidenceScore,
     mostFrequentDomain,
+    trueDomain: mostFrequentDomain, // **Valid trueDomain found**
     frequencyCount: maxCount,
-    totalResults: domainList.length,
-    textMatchScore,        // NEW: -1 = no text, 0 = mismatch, 1.0 = match
-    brandKeywords,         // NEW: Array of brand names found in logo text
-    textThreatDetected,    // NEW: Boolean - true if logo text doesn't match URL
+    totalResults: cleanMatches.length,
+    textMatchScore,
+    brandKeywords,
+    textThreatDetected,
     error: false,
     errorMessage: null
   };
+}
+
+/**
+ * **NEW HELPER: Fuzzy Brand Matching**
+ * 
+ * More robust than exact substring matching.
+ * Handles case variations, word boundaries, and common separators.
+ */
+function fuzzyBrandMatch(text, brandName) {
+  if (!text || !brandName) return false;
+  
+  const normalizedText = text.toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ') // Remove special chars
+    .replace(/\s+/g, ' ') // Normalize spaces
+    .trim();
+  
+  const normalizedBrand = brandName.toLowerCase()
+    .replace(/[^a-z0-9]/g, ''); // Remove all non-alphanumeric
+  
+  // Check for word boundary match (more precise)
+  const words = normalizedText.split(' ');
+  return words.some(word => 
+    word.replace(/[^a-z0-9]/g, '') === normalizedBrand
+  );
+}
+
+/**
+ * Helper: Generate human-readable status message
+ */
+function generateStatus(scoreResult) {
+  if (scoreResult.error) {
+    return 'Error: ' + (scoreResult.errorMessage || 'Unknown error');
+  }
+  
+  if (scoreResult.warning) {
+    return 'Warning: ' + scoreResult.warning;
+  }
+  
+  if (!scoreResult.trueDomain || scoreResult.trueDomain === null) {
+    return 'Inconclusive - Visual Analysis N/A';
+  }
+  
+  if (scoreResult.similarityScore === 0) {
+    return 'Safe: Visual Match Confirmed';
+  }
+  
+  if (scoreResult.similarityScore >= 0.85) {
+    return 'High Risk: Domain Mismatch Detected';
+  }
+  
+  if (scoreResult.similarityScore >= 0.70) {
+    return 'Medium Risk: Suspicious Indicators';
+  }
+  
+  return 'Low Risk: Minor Anomalies Detected';
 }
 
 /**
@@ -1463,26 +1295,14 @@ function calculateScore(visualMatches, currentDomain, textResults = [], knowledg
  * 
  * @param {number} tabId - The ID of the current tab to capture
  * @param {string} currentUrl - The URL of the current page
- * @returns {Promise<Object>} - Promise resolving to score object:
- *   {
- *     similarityScore: number,  // 0 = legitimate, >0 = impersonation detected
- *     confidenceScore: number,   // Frequency of most common domain
- *     currentDomain: string,     // Standardized current domain
- *     trueDomain: string,        // Most frequent domain from visual search
- *     frequencyCount: number,    // Count of most frequent domain
- *     totalResults: number,      // Total results analyzed
- *     error: boolean,            // Whether an error occurred
- *     errorMessage: string      // Error message if error occurred
- *   }
+ * @returns {Promise<Object>} - Promise resolving to score object
  */
 export async function calculateDavssScore(tabId, currentUrl) {
   try {
     // Step 1: Image Capture
-    // Capture the visible tab as a base64 data URL
     let imageROI;
     let logoCrop = null;
     try {
-      // Get the window ID from the tab
       let windowId = null;
       if (tabId) {
         try {
@@ -1493,7 +1313,6 @@ export async function calculateDavssScore(tabId, currentUrl) {
         }
       }
 
-      // Capture visible tab (null windowId means current window)
       imageROI = await new Promise((resolve, reject) => {
         chrome.tabs.captureVisibleTab(windowId, {
           format: 'png',
@@ -1507,7 +1326,6 @@ export async function calculateDavssScore(tabId, currentUrl) {
         });
       });
 
-      // Attempt logo detection and crop
       const logoInfo = await getLogoCoordinates(tabId);
       if (logoInfo && logoInfo.rect) {
         try {
@@ -1525,7 +1343,7 @@ export async function calculateDavssScore(tabId, currentUrl) {
         similarityScore: -1,
         confidenceScore: 0,
         currentDomain: '',
-        trueDomain: '',
+        trueDomain: null,
         frequencyCount: 0,
         totalResults: 0,
         error: true,
@@ -1544,7 +1362,7 @@ export async function calculateDavssScore(tabId, currentUrl) {
         similarityScore: -1,
         confidenceScore: 0,
         currentDomain: '',
-        trueDomain: '',
+        trueDomain: null,
         frequencyCount: 0,
         totalResults: 0,
         error: true,
@@ -1552,7 +1370,7 @@ export async function calculateDavssScore(tabId, currentUrl) {
       };
     }
 
-    // Step 3: Visual Search via SerpApi (with OCR Text Extraction)
+    // Step 3: Visual Search via SerpApi
     let visualMatches, textResults, knowledgeGraph;
     try {
       const serpApiResponse = await fetchVisualMatches(imageUrl);
@@ -1569,7 +1387,7 @@ export async function calculateDavssScore(tabId, currentUrl) {
           similarityScore: -1,
           confidenceScore: 0,
           currentDomain: '',
-          trueDomain: '',
+          trueDomain: null,
           frequencyCount: 0,
           totalResults: 0,
           error: true,
@@ -1581,7 +1399,7 @@ export async function calculateDavssScore(tabId, currentUrl) {
         similarityScore: -1,
         confidenceScore: 0,
         currentDomain: '',
-        trueDomain: '',
+        trueDomain: null,
         frequencyCount: 0,
         totalResults: 0,
         error: true,
@@ -1589,113 +1407,47 @@ export async function calculateDavssScore(tabId, currentUrl) {
       };
     }
 
-    // ==================================================================
-    // WEIGHTED EVIDENCE PIPELINE - VERDICT ENGINE
-    // ==================================================================
+    // Step 4: Calculate Score using the FIXED calculateScore function
+    const standardizedDomain = standardizeDomain(currentUrl);
+    console.log('[DAVSS] Standardized current domain:', standardizedDomain);
+    
+    const scoreResult = calculateScore(
+      visualMatches,
+      standardizedDomain,
+      textResults,
+      knowledgeGraph,
+      currentUrl
+    );
 
-    console.log('[DAVSS] ═══ WEIGHTED EVIDENCE PIPELINE ═══');
+    console.log('[DAVSS] Score Result:', scoreResult);
 
-    // STEP 1: Parse Current URL
-    const currentDetails = parseUrlDetails(currentUrl);
-    if (!currentDetails.isValid) {
-      return {
-        similarityScore: -1,
-        confidenceScore: 0,
-        currentDomain: '',
-        trueDomain: '',
-        status: 'Error: Invalid URL',
-        error: true,
-        errorMessage: 'Failed to parse current URL'
-      };
-    }
-
-    console.log('[DAVSS] Current URL Details:', currentDetails);
-
-    // STEP 2: Extract Signals
-    const signals = extractSignals(visualMatches, currentDetails);
-
-    // STEP 3: VERDICT ENGINE - Evaluate signals against scenarios
-    console.log('[DAVSS] ═══ EVALUATING VERDICT ═══');
-
-    // SCENARIO A: Direct Validation
-    if (signals.visualDomainMatch) {
-      console.log('[DAVSS] ✓ SCENARIO A: Direct Validation');
-      return {
-        similarityScore: 0,
-        confidenceScore: 1.0,
-        currentDomain: currentDetails.hostname,
-        trueDomain: currentDetails.hostname,
-        status: 'Safe: Visual Match Confirmed',
-        scenario: 'A',
-        error: false
-      };
-    }
-
-    // SCENARIO B: Contextual Validation
-    if (signals.titleKeywordMatch && CONFIG.SAFE_TLDS.has(currentDetails.tld)) {
-      console.log('[DAVSS] ✓ SCENARIO B: Contextual Validation');
-      return {
-        similarityScore: 0,
-        confidenceScore: 0.9,
-        currentDomain: currentDetails.hostname,
-        trueDomain: currentDetails.hostname,
-        status: 'Safe: Verified Entity on Safe TLD',
-        scenario: 'B',
-        error: false
-      };
-    }
-
-    // SCENARIO C: TLD Trap
-    if (signals.titleKeywordMatch && CONFIG.RISKY_TLDS.has(currentDetails.tld)) {
-      console.warn('[DAVSS] ⚠️ SCENARIO C: TLD Trap');
-      return {
-        similarityScore: 0.85,
-        confidenceScore: 0.8,
-        currentDomain: currentDetails.hostname,
-        trueDomain: signals.detectedTrueDomain || 'Unknown',
-        status: 'Phishing: Brand Match on Risky TLD',
-        scenario: 'C',
-        error: false
-      };
-    }
-
-    // SCENARIO D: Priority Impersonation
-    if (signals.foundPriorityBrand && signals.detectedTrueDomain !== currentDetails.hostname) {
-      console.warn('[DAVSS] ⚠️ SCENARIO D: Priority Impersonation');
-      return {
-        similarityScore: 0.95,
-        confidenceScore: 1.0,
-        currentDomain: currentDetails.hostname,
-        trueDomain: signals.detectedTrueDomain,
-        status: `Phishing: ${signals.priorityBrandName.toUpperCase()} Impersonation`,
-        scenario: 'D',
-        error: false
-      };
-    }
-
-    // SCENARIO E: Inconclusive
-    console.log('[DAVSS] ❓ SCENARIO E: Inconclusive');
-    const verdictResult = {
-      similarityScore: 0,
-      confidenceScore: 0,
-      currentDomain: currentDetails.hostname,
-      trueDomain: null,
-      status: 'Inconclusive: Insufficient Data',
-      scenario: 'E',
-      error: false
+    // Step 5: Format and return result
+    return {
+      similarityScore: scoreResult.similarityScore,
+      confidenceScore: scoreResult.confidenceScore,
+      currentDomain: standardizedDomain,
+      trueDomain: scoreResult.trueDomain, // Can be null (N/A) or a valid domain
+      mostFrequentDomain: scoreResult.mostFrequentDomain,
+      frequencyCount: scoreResult.frequencyCount,
+      totalResults: scoreResult.totalResults,
+      textMatchScore: scoreResult.textMatchScore,
+      brandKeywords: scoreResult.brandKeywords,
+      textThreatDetected: scoreResult.textThreatDetected,
+      error: scoreResult.error,
+      errorMessage: scoreResult.errorMessage,
+      safetyOverride: scoreResult.safetyOverride,
+      warning: scoreResult.warning,
+      whitelisted: false, // Domain whitelist check happens in background.js
+      status: scoreResult.safetyOverride || generateStatus(scoreResult)
     };
 
-    // Return verdict
-    return verdictResult;
-
   } catch (error) {
-    // Catch any unexpected errors
     console.error('[DAVSS] Unexpected error:', error);
     return {
       similarityScore: -1,
       confidenceScore: 0,
       currentDomain: '',
-      trueDomain: '',
+      trueDomain: null,
       frequencyCount: 0,
       totalResults: 0,
       error: true,
