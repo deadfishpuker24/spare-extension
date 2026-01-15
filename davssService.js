@@ -15,7 +15,9 @@
  * API Keys - TODO: Store these in chrome.storage.local for better security
  */
 const IMGBB_API_KEY = 'fd7077fb381de903b0f53d11e0269a07';
-const SERPAPI_KEY = '081207b3c5172c4c497812a945b99718c9aebe553d19b09085ece1884dd5e9df';
+//const SERPAPI_KEY = '081207b3c5172c4c497812a945b99718c9aebe553d19b09085ece1884dd5e9df';
+//use above key again in a month
+const SERPAPI_KEY = 'af54b86e7272726271820455c44ba5f9a51918e10b47f6f4c6726bae1901c2c9';
 
 /**
  * Configuration for Weighted Evidence Pipeline
@@ -161,7 +163,7 @@ function extractSignals(visualMatches, currentDetails) {
 
   const { brand: currentBrand, hostname: currentHost } = currentDetails;
 
-  console.log('[DAVSS] 🔍 Extracting signals for brand:', currentBrand);
+  console.log('[DAVSS] ðŸ” Extracting signals for brand:', currentBrand);
 
   // Scan all visual matches for evidence
   for (const match of visualMatches) {
@@ -185,7 +187,7 @@ function extractSignals(visualMatches, currentDetails) {
     // SIGNAL A: Direct Domain Match
     if (resultDomain === currentHost) {
       signals.visualDomainMatch = true;
-      console.log('[DAVSS] ✓ Visual Domain Match:', resultDomain);
+      console.log('[DAVSS] âœ“ Visual Domain Match:', resultDomain);
     }
 
     // SIGNAL B: Priority Brand Detection (Expert Witness)
@@ -193,13 +195,13 @@ function extractSignals(visualMatches, currentDetails) {
       signals.foundPriorityBrand = true;
       signals.detectedTrueDomain = resultDomain;
       signals.priorityBrandName = resultBrand;
-      console.log('[DAVSS] 🎯 Priority Brand Detected:', resultBrand, '→', resultDomain);
+      console.log('[DAVSS] ðŸŽ¯ Priority Brand Detected:', resultBrand, 'â†’', resultDomain);
     }
 
     // SIGNAL C: Title Keyword Match (Contextual Validation)
     if (title && title.includes(currentBrand)) {
       signals.titleKeywordMatch = true;
-      console.log('[DAVSS] ✓ Title mentions current brand:', title);
+      console.log('[DAVSS] âœ“ Title mentions current brand:', title);
     }
   }
 
@@ -345,9 +347,9 @@ function extractBrand(rootDomain) {
  * to get the core brand identity for matching against search result titles.
  * 
  * Examples:
- * - https://www.delhivery.com → "delhivery"
- * - https://secure.login.microsoft.com → "microsoft"
- * - https://free-robux-scam.com → "free-robux-scam"
+ * - https://www.delhivery.com â†’ "delhivery"
+ * - https://secure.login.microsoft.com â†’ "microsoft"
+ * - https://free-robux-scam.com â†’ "free-robux-scam"
  * 
  * @param {string} url - Full URL or hostname
  * @returns {string} - Normalized brand name
@@ -765,8 +767,8 @@ const PRIORITY_DOMAINS = new Set([
  * If these appear as visual match winners, we check titles to see if they're talking
  * about the current brand (not phishing the platform itself).
  * 
- * Example: Delhivery.com has a LinkedIn profile → "linkedin.com" appears in results
- * → We check if title contains "delhivery" → If yes, it's SAFE (not phishing LinkedIn)
+ * Example: Delhivery.com has a LinkedIn profile â†’ "linkedin.com" appears in results
+ * â†’ We check if title contains "delhivery" â†’ If yes, it's SAFE (not phishing LinkedIn)
  */
 const PLATFORM_DOMAINS = new Set([
   // Social Media & Professional Networks
@@ -1120,7 +1122,7 @@ function calculateScore(visualMatches, currentDomain, textResults = [], knowledg
     for (const matchDomain of cleanMatches) {
       const matchBrand = extractBrand(extractRootDomain(matchDomain));
       if (matchBrand === currentBrand) {
-        console.log('[DAVSS] ✓ ANYWHERE MATCH FOUND:', matchDomain);
+        console.log('[DAVSS] âœ“ ANYWHERE MATCH FOUND:', matchDomain);
         console.log('[DAVSS] Current brand appears in visual results - Site is SAFE');
         return {
           similarityScore: 0,  // Safe - brand confirmed
@@ -1160,7 +1162,7 @@ function calculateScore(visualMatches, currentDomain, textResults = [], knowledg
 
     // Check if this domain is in the priority list
     if (PRIORITY_DOMAINS.has(rootDomain)) {
-      console.log('[DAVSS] 🎯 PRIORITY DOMAIN DETECTED:', rootDomain);
+      console.log('[DAVSS] ðŸŽ¯ PRIORITY DOMAIN DETECTED:', rootDomain);
       console.log('[DAVSS] This is a high-risk brand - using as TrueDomain with MAX confidence');
 
       mostFrequentDomain = domain;
@@ -1234,7 +1236,7 @@ function calculateScore(visualMatches, currentDomain, textResults = [], knowledg
 
   // NOTE: This check is SKIPPED for priority matches (already handled above with 1.0 confidence)
   if (!isPriorityMatch && confidenceScore < MIN_CONFIDENCE_THRESHOLD) {
-    console.warn(`[DAVSS] ⚠️ CONFIDENCE TOO LOW (${confidenceScore.toFixed(2)} < ${MIN_CONFIDENCE_THRESHOLD})`);
+    console.warn(`[DAVSS] âš ï¸ CONFIDENCE TOO LOW (${confidenceScore.toFixed(2)} < ${MIN_CONFIDENCE_THRESHOLD})`);
     console.warn('[DAVSS] Visual match too weak. Defaulting to SAFE to prevent false positive.');
     return {
       similarityScore: 0,  // Safe - insufficient data
@@ -1256,10 +1258,10 @@ function calculateScore(visualMatches, currentDomain, textResults = [], knowledg
   // **STEP 5A: TITLE SAFETY CHECK (Entity Verification)**
   // Before comparing domains, check if any search result titles mention the current brand
   // This prevents false positives when LinkedIn/Facebook profiles appear in results
-  // Example: "Delhivery | LinkedIn" contains "delhivery" → SAFE
+  // Example: "Delhivery | LinkedIn" contains "delhivery" â†’ SAFE
 
   const currentBrandName = extractBrandName(currentUrl);
-  console.log('[DAVSS] 🔍 Title Verification: Checking if results mention brand:', currentBrandName);
+  console.log('[DAVSS] ðŸ” Title Verification: Checking if results mention brand:', currentBrandName);
 
   if (currentBrandName) {
     // Scan ALL visual matches for title mentions
@@ -1269,7 +1271,7 @@ function calculateScore(visualMatches, currentDomain, textResults = [], knowledg
 
       // Check if title contains current brand name
       if (title && title.includes(currentBrandName)) {
-        console.log('[DAVSS] ✓ TITLE MATCH FOUND:', match.title);
+        console.log('[DAVSS] âœ“ TITLE MATCH FOUND:', match.title);
         console.log('[DAVSS] Search results mention current brand - Site is SAFE');
         console.log('[DAVSS] This is likely a social media profile or news article about the brand');
 
@@ -1290,7 +1292,7 @@ function calculateScore(visualMatches, currentDomain, textResults = [], knowledg
 
       // Also check if link domain matches current (backup check)
       if (link && link.includes(currentDomain)) {
-        console.log('[DAVSS] ✓ DOMAIN MATCH in search results');
+        console.log('[DAVSS] âœ“ DOMAIN MATCH in search results');
         return {
           similarityScore: 0,
           confidenceScore: 1.0,
@@ -1332,7 +1334,7 @@ function calculateScore(visualMatches, currentDomain, textResults = [], knowledg
   const isPlatformWinner = PLATFORM_DOMAINS.has(trueRoot);
 
   if (isPlatformWinner) {
-    console.log('[DAVSS] 🌐 Winner is a PLATFORM domain:', trueRoot);
+    console.log('[DAVSS] ðŸŒ Winner is a PLATFORM domain:', trueRoot);
     console.log('[DAVSS] Checking if current site mimics platform or just has a profile...');
 
     // Extract clean brand names for comparison
@@ -1342,14 +1344,14 @@ function calculateScore(visualMatches, currentDomain, textResults = [], knowledg
     // e.g., "linkedln-login.com" or "secure-linkedin.com"
     if (currentBrandName.includes(platformBrand)) {
       // Current brand name contains platform name - likely phishing the platform itself
-      console.warn('[DAVSS] ⚠️ PLATFORM LOGIN MIMIC DETECTED!');
+      console.warn('[DAVSS] âš ï¸ PLATFORM LOGIN MIMIC DETECTED!');
       console.warn(`[DAVSS] Current site "${currentBrandName}" appears to mimic ${platformBrand}`);
       // Don't return here - let it fall through to scoring logic
     } else {
       // Current brand does NOT contain platform name
       // This is likely a company's social media profile, not phishing
       // Example: delhivery.com has a LinkedIn profile
-      console.log('[DAVSS] ✓ PLATFORM PROFILE DETECTED (NOT phishing)');
+      console.log('[DAVSS] âœ“ PLATFORM PROFILE DETECTED (NOT phishing)');
       console.log(`[DAVSS] Current brand "${currentBrandName}" is different from platform "${platformBrand}"`);
       console.log('[DAVSS] This appears to be a legitimate business with a social media profile');
 
@@ -1433,7 +1435,7 @@ function calculateScore(visualMatches, currentDomain, textResults = [], knowledg
   // **OVERRIDE LOGIC**: If visual confidence is low BUT text threat is detected
   // This catches cases where visual matches are weak/noisy but logo text clearly shows different brand
   if (confidenceScore < 0.5 && textThreatDetected) {
-    console.warn('[DAVSS] ⚠️ OVERRIDING visual score with text-based detection');
+    console.warn('[DAVSS] âš ï¸ OVERRIDING visual score with text-based detection');
     console.warn('[DAVSS] Logo contains brand text that does NOT match URL - HIGH THREAT');
     similarityScore = 0.95; // Critical phishing - text contradiction overrides weak visual data
   }
@@ -1593,7 +1595,7 @@ export async function calculateDavssScore(tabId, currentUrl) {
     // WEIGHTED EVIDENCE PIPELINE - VERDICT ENGINE
     // ==================================================================
 
-    console.log('[DAVSS] ═══ WEIGHTED EVIDENCE PIPELINE ═══');
+    console.log('[DAVSS] â•â•â• WEIGHTED EVIDENCE PIPELINE â•â•â•');
 
     // STEP 1: Parse Current URL
     const currentDetails = parseUrlDetails(currentUrl);
@@ -1615,11 +1617,11 @@ export async function calculateDavssScore(tabId, currentUrl) {
     const signals = extractSignals(visualMatches, currentDetails);
 
     // STEP 3: VERDICT ENGINE - Evaluate signals against scenarios
-    console.log('[DAVSS] ═══ EVALUATING VERDICT ═══');
+    console.log('[DAVSS] â•â•â• EVALUATING VERDICT â•â•â•');
 
     // SCENARIO A: Direct Validation
     if (signals.visualDomainMatch) {
-      console.log('[DAVSS] ✓ SCENARIO A: Direct Validation');
+      console.log('[DAVSS] âœ“ SCENARIO A: Direct Validation');
       return {
         similarityScore: 0,
         confidenceScore: 1.0,
@@ -1633,7 +1635,7 @@ export async function calculateDavssScore(tabId, currentUrl) {
 
     // SCENARIO B: Contextual Validation
     if (signals.titleKeywordMatch && CONFIG.SAFE_TLDS.has(currentDetails.tld)) {
-      console.log('[DAVSS] ✓ SCENARIO B: Contextual Validation');
+      console.log('[DAVSS] âœ“ SCENARIO B: Contextual Validation');
       return {
         similarityScore: 0,
         confidenceScore: 0.9,
@@ -1647,7 +1649,7 @@ export async function calculateDavssScore(tabId, currentUrl) {
 
     // SCENARIO C: TLD Trap
     if (signals.titleKeywordMatch && CONFIG.RISKY_TLDS.has(currentDetails.tld)) {
-      console.warn('[DAVSS] ⚠️ SCENARIO C: TLD Trap');
+      console.warn('[DAVSS] âš ï¸ SCENARIO C: TLD Trap');
       return {
         similarityScore: 0.85,
         confidenceScore: 0.8,
@@ -1661,7 +1663,7 @@ export async function calculateDavssScore(tabId, currentUrl) {
 
     // SCENARIO D: Priority Impersonation
     if (signals.foundPriorityBrand && signals.detectedTrueDomain !== currentDetails.hostname) {
-      console.warn('[DAVSS] ⚠️ SCENARIO D: Priority Impersonation');
+      console.warn('[DAVSS] âš ï¸ SCENARIO D: Priority Impersonation');
       return {
         similarityScore: 0.95,
         confidenceScore: 1.0,
@@ -1674,7 +1676,7 @@ export async function calculateDavssScore(tabId, currentUrl) {
     }
 
     // SCENARIO E: Inconclusive
-    console.log('[DAVSS] ❓ SCENARIO E: Inconclusive');
+    console.log('[DAVSS] â“ SCENARIO E: Inconclusive');
     const verdictResult = {
       similarityScore: 0,
       confidenceScore: 0,

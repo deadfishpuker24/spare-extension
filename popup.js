@@ -1,4 +1,4 @@
-// Popup script - Integrated scoring system with online learning
+// popup.js - Modified to handle N/A visual scores properly
 
 let analysisData = {
   prediction: null,
@@ -9,13 +9,19 @@ let analysisData = {
   unifiedScore: 0
 };
 
-let phishingSystem = null;
+let linucbOptimizer = null;
 
-// Initialize
 document.addEventListener('DOMContentLoaded', async () => {
-  // Initialize weight optimizer
-  phishingSystem = new OnlinePhishingSystem();
-  await phishingSystem.loadWeights();
+  // Initialize LinUCB optimizer
+  linucbOptimizer = new LinUCB(
+    5,    // n_actions: 5 weight configurations
+    4,    // n_features: [ml, vis, off, disagreement]
+    1.0   // alpha: exploration parameter
+  );
+  // Load saved model
+  await linucbOptimizer.load();
+  console.log('[LinUCB] Optimizer initialized');
+  
 
   // Setup tabs
   document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -98,6 +104,9 @@ async function startAnalysis() {
     console.log('[Phishing Detector] URL features extracted:', urlFeatures.length);
 
     // === STEP 3: Start off-page analysis ===
+    const offpageOutput = document.getElementById('offpage-output');
+    if (offpageOutput) offpageOutput.textContent = "Analyzing domain...";
+    
     const domain = new URL(url).hostname;
     const offpagePromise = analyzeOffpage(domain);
 
@@ -191,6 +200,9 @@ async function startAnalysis() {
         console.warn("Visual analysis failed", e);
       }
       
+      // NOW display off-page results (after visual is done)
+      displayOffpageResults();
+      
       // Run smart login page check
       result = smartLoginPageCheck(url, result, analysisData.offpage);
       
@@ -218,78 +230,107 @@ async function startAnalysis() {
 }
 
 async function analyzeOffpage(domain) {
-  const offpageOutput = document.getElementById('offpage-output');
-  if (!offpageOutput) return;
-
   try {
-    offpageOutput.textContent = 'Analyzing domain...';
-    
     const { analyzeDomain } = await import('./offpage.js');
     const result = await analyzeDomain(domain);
     
     analysisData.offpage = result;
     
     if (result.error) {
-      // RDAP failed - set score to null
       analysisData.moduleScores.offPage = null;
-      offpageOutput.textContent = JSON.stringify({
-        error: true,
-        reason: result.reason
-      }, null, 2);
     } else {
-      // Extract off-page score
       analysisData.moduleScores.offPage = result.normalized;
-      offpageOutput.textContent = JSON.stringify({
-        domain: result.domain,
-        daysAge: result.daysAge,
-        daysLifespan: result.daysLifespan,
-        daysSinceUpdate: result.daysSinceUpdate,
-        scoreAge: result.scoreAge,
-        scoreLifespan: result.scoreLifespan,
-        scoreUpdate: result.scoreUpdate,
-        rawScore: result.rawScore,
-        normalizedRisk: result.normalized,
-        whitelisted: result.whitelisted
-      }, null, 2);
     }
+    
+    console.log('[Phishing Detector] Off-page analysis complete (waiting to display)');
+    
   } catch (error) {
     console.error('[Phishing Detector] Off-page analysis error:', error);
     analysisData.moduleScores.offPage = null;
-    offpageOutput.textContent = JSON.stringify({
-      error: true,
-      reason: error.message
-    }, null, 2);
+  }
+}
+
+function displayOffpageResults() {
+  const offpageOutput = document.getElementById('offpage-output');
+  if (!offpageOutput) return;
+  
+  const result = analysisData.offpage;
+  
+  if (!result) {
+    offpageOutput.textContent = 'No off-page data available';
+    return;
   }
   
-  updateUnifiedScore();
+  if (result.error) {
+    offpageOutput.textContent = JSON.stringify({
+      error: true,
+      reason: result.reason
+    }, null, 2);
+  } else {
+    offpageOutput.textContent = JSON.stringify({
+      domain: result.domain,
+      daysAge: result.daysAge,
+      daysLifespan: result.daysLifespan,
+      daysSinceUpdate: result.daysSinceUpdate,
+      scoreAge: result.scoreAge,
+      scoreLifespan: result.scoreLifespan,
+      scoreUpdate: result.scoreUpdate,
+      rawScore: result.rawScore,
+      normalizedRisk: result.normalized,
+      whitelisted: result.whitelisted
+    }, null, 2);
+  }
 }
 
 function extractVisualScore(davssData) {
-  if (!davssData || davssData.error) return null;
+  if (!davssData || davssData.error) {
+    console.log('[Visual Score] Error or no data returned');
+    return null;
+  }
   
-  // Convert DAVSS result to 0-1 score
+  // CRITICAL FIX: Check for N/A trueDomain (inconclusive results)
+  // This happens when DAVSS can't determine the true domain
+  if (!davssData.trueDomain || davssData.trueDomain === 'N/A' || davssData.trueDomain === null) {
+    console.warn('[Visual Score] No trueDomain detected - returning N/A');
+    return null; // Signal that visual analysis was inconclusive
+  }
+  
   // If whitelisted, score = 0 (safe)
-  if (davssData.whitelisted) return 0;
+  if (davssData.whitelisted) {
+    console.log('[Visual Score] Domain is whitelisted - score = 0');
+    return 0;
+  }
   
   // Otherwise use similarity score (already 0-1)
-  return davssData.similarityScore || 0;
+  const score = davssData.similarityScore || 0;
+  console.log('[Visual Score] Similarity score:', score);
+  return score;
 }
 
 function updateUnifiedScore() {
   const { onPage, visual, offPage } = analysisData.moduleScores;
-  
-  // Prepare scores array (null values will be filtered by weight optimizer)
   const scores = [onPage, visual, offPage];
   
-  // Calculate unified score using weight optimizer
-  const unifiedScore = phishingSystem.predict(scores);
-  analysisData.unifiedScore = unifiedScore;
+  // Use LinUCB to select weights and calculate score
+  const result = linucbOptimizer.predict(scores);
+  
+  analysisData.unifiedScore = result.score;
+  analysisData.selectedAction = result.action;
+  analysisData.weightsUsed = result.weights;
+  analysisData.ucbValues = result.ucb_values;
+  analysisData.contextFeatures = result.context;
+  
+  console.log('[LinUCB] Prediction:', {
+    score: result.score,
+    action: result.action,
+    weights: result.weights
+  });
   
   // Display unified score
-  displayUnifiedScore(unifiedScore, scores);
+  displayUnifiedScore(result.score, scores);
   
-  // Display RAW data
-  displayRawData(scores, unifiedScore);
+  // Display RAW data (updated version below)
+  displayRawData(scores, result);
 }
 
 function displayUnifiedScore(score, moduleScores) {
@@ -461,6 +502,19 @@ function displayVisuals(davssData) {
     return;
   }
 
+  // CRITICAL FIX: Check for N/A trueDomain
+  if (!davssData.trueDomain || davssData.trueDomain === 'N/A' || davssData.trueDomain === null) {
+    const report = {
+      "Status": "Inconclusive - Visual Analysis N/A",
+      "Reason": "Could not determine true domain from visual search",
+      "Current Domain": davssData.currentDomain || "N/A",
+      "Note": "Final score will be based on ML and Off-Page analysis only"
+    };
+    visualOutput.textContent = JSON.stringify(report, null, 2);
+    visualOutput.style.color = "orange";
+    return;
+  }
+
   const isSuspicious = davssData.similarityScore > 0;
   const statusColor = isSuspicious ? "red" : "green";
 
@@ -479,56 +533,61 @@ function displayVisuals(davssData) {
   visualOutput.style.color = statusColor;
 }
 
-function displayRawData(scores, unifiedScore) {
+function displayRawData(scores, result) {
   const rawOutput = document.getElementById('raw-output');
   if (!rawOutput) return;
 
-  const weights = phishingSystem.getWeights();
   const [onPage, visual, offPage] = scores;
   
-  // Get valid scores (filter nulls)
-  const validScores = [];
-  const scoreNames = ['on_page', 'visual', 'off_page'];
-  scores.forEach((score, idx) => {
-    if (score !== null && score !== undefined && !isNaN(score)) {
-      validScores.push({
-        name: scoreNames[idx],
-        value: score,
-        weight: weights[scoreNames[idx]]
-      });
-    }
-  });
-
-  // Calculate individual contributions
-  const contributions = validScores.map(s => ({
-    module: s.name,
-    score: s.value.toFixed(4),
-    weight: s.weight.toFixed(4),
-    contribution: (s.value * s.weight).toFixed(4)
-  }));
-
   const rawData = {
     "Raw Module Scores": {
       "on_page": onPage !== null ? onPage.toFixed(4) : "NULL",
       "visual": visual !== null ? visual.toFixed(4) : "NULL",
       "off_page": offPage !== null ? offPage.toFixed(4) : "NULL"
     },
-    "Current Weights": {
-      "on_page": weights.on_page.toFixed(4),
-      "visual": weights.visual.toFixed(4),
-      "off_page": weights.off_page.toFixed(4)
+    "LinUCB Decision": {
+      "selected_action": result.action,
+      "action_description": getActionDescription(result.action),
+      "weights_used": {
+        "ml": result.weights[0].toFixed(3),
+        "visual": result.weights[1].toFixed(3),
+        "offpage": result.weights[2].toFixed(3)
+      }
     },
-    "Calculation Breakdown": contributions,
-    "Unified Score": unifiedScore.toFixed(4),
-    "Unified Score (%)": (unifiedScore * 100).toFixed(2) + "%",
+    "Context Features": {
+      "ml_score": result.context[0].toFixed(4),
+      "visual_score": result.context[1].toFixed(4),
+      "offpage_score": result.context[2].toFixed(4),
+      "disagreement": result.context[3].toFixed(4)
+    },
+    "UCB Values (All Actions)": result.ucb_values.map(ucb => ({
+      action: ucb.action,
+      predicted_reward: ucb.predicted_reward.toFixed(4),
+      uncertainty: ucb.uncertainty.toFixed(4),
+      ucb_score: ucb.ucb.toFixed(4),
+      invalid: ucb.invalid || false
+    })),
+    "Final Unified Score": result.score.toFixed(4),
+    "Unified Score (%)": (result.score * 100).toFixed(2) + "%",
     "Model Status": {
-      "has_learned": phishingSystem.hasLearned,
-      "learning_rate": phishingSystem.lr
+      "total_trials": linucbOptimizer.total_trials,
+      "exploration_alpha": linucbOptimizer.alpha
     }
   };
 
   rawOutput.textContent = JSON.stringify(rawData, null, 2);
   rawOutput.style.color = "#d4d4d4";
+}
+
+function getActionDescription(action) {
+  const descriptions = [
+    'ML Heavy (60-20-20)',
+    'Visual Heavy (20-60-20)',
+    'OffPage Heavy (20-20-60)',
+    'ML+Visual Blend (50-30-20)',
+    'Balanced (33-33-33)'
+  ];
+  return descriptions[action] || 'Unknown';
 }
 
 function smartLoginPageCheck(url, prediction, offpageData) {
@@ -594,31 +653,32 @@ async function submitFeedback(label) {
     const { onPage, visual, offPage } = analysisData.moduleScores;
     const scores = [onPage, visual, offPage];
     
-    // Update the model
-    phishingSystem.update(scores, label);
+    // Process feedback with LinUCB
+    const feedback_result = await linucbOptimizer.processUserFeedback(scores, label);
     
-    // Get updated weights
-    const weights = phishingSystem.getWeights();
-    console.log('[Feedback] Updated weights:', weights);
+    console.log('[LinUCB] Feedback processed:', feedback_result);
     
-    // Log feedback data for tracking
+    // Log to storage for tracking
     chrome.storage.local.get('feedback_count', (data) => {
       const count = (data.feedback_count || 0) + 1;
       chrome.storage.local.set({ feedback_count: count });
       console.log(`[Feedback] Total feedback submissions: ${count}`);
     });
     
-    // Recalculate score with new weights
-    const newScore = phishingSystem.predict(scores);
-    analysisData.unifiedScore = newScore;
-    displayUnifiedScore(newScore, scores);
-    
-    // Update RAW tab
-    displayRawData(scores, newScore);
+    // Recalculate score with updated model
+    const new_result = linucbOptimizer.predict(scores);
+    analysisData.unifiedScore = new_result.score;
+    displayUnifiedScore(new_result.score, scores);
+    displayRawData(scores, new_result);
     
     // Show success message
     if (feedbackStatus) {
-      feedbackStatus.textContent = `✓ Thank you! Model updated. New weights: On-Page ${(weights.on_page*100).toFixed(1)}%, Visual ${(weights.visual*100).toFixed(1)}%, Off-Page ${(weights.off_page*100).toFixed(1)}%`;
+      const actionDesc = getActionDescription(feedback_result.action);
+      const weightsStr = feedback_result.weights_used.map((w, i) => 
+        `${['ML', 'Vis', 'Off'][i]}=${(w*100).toFixed(0)}%`
+      ).join(', ');
+      
+      feedbackStatus.textContent = `✓ Thank you! LinUCB updated. Used ${actionDesc}: ${weightsStr}`;
       feedbackStatus.classList.remove('error');
     }
     
@@ -629,7 +689,7 @@ async function submitFeedback(label) {
     }, 3000);
     
   } catch (error) {
-    console.error('[Feedback] Error:', error);
+    console.error('[LinUCB] Feedback error:', error);
     if (feedbackStatus) {
       feedbackStatus.textContent = '✗ Failed to update model';
       feedbackStatus.classList.add('error');
