@@ -104,6 +104,9 @@ async function startAnalysis() {
     console.log('[Phishing Detector] URL features extracted:', urlFeatures.length);
 
     // === STEP 3: Start off-page analysis ===
+    const offpageOutput = document.getElementById('offpage-output');
+    if (offpageOutput) offpageOutput.textContent = "Analyzing domain...";
+    
     const domain = new URL(url).hostname;
     const offpagePromise = analyzeOffpage(domain);
 
@@ -197,6 +200,9 @@ async function startAnalysis() {
         console.warn("Visual analysis failed", e);
       }
       
+      // NOW display off-page results (after visual is done)
+      displayOffpageResults();
+      
       // Run smart login page check
       result = smartLoginPageCheck(url, result, analysisData.offpage);
       
@@ -224,50 +230,56 @@ async function startAnalysis() {
 }
 
 async function analyzeOffpage(domain) {
-  const offpageOutput = document.getElementById('offpage-output');
-  if (!offpageOutput) return;
-
   try {
-    offpageOutput.textContent = 'Analyzing domain...';
-    
     const { analyzeDomain } = await import('./offpage.js');
     const result = await analyzeDomain(domain);
     
     analysisData.offpage = result;
     
     if (result.error) {
-      // RDAP failed - set score to null
       analysisData.moduleScores.offPage = null;
-      offpageOutput.textContent = JSON.stringify({
-        error: true,
-        reason: result.reason
-      }, null, 2);
     } else {
-      // Extract off-page score
       analysisData.moduleScores.offPage = result.normalized;
-      offpageOutput.textContent = JSON.stringify({
-        domain: result.domain,
-        daysAge: result.daysAge,
-        daysLifespan: result.daysLifespan,
-        daysSinceUpdate: result.daysSinceUpdate,
-        scoreAge: result.scoreAge,
-        scoreLifespan: result.scoreLifespan,
-        scoreUpdate: result.scoreUpdate,
-        rawScore: result.rawScore,
-        normalizedRisk: result.normalized,
-        whitelisted: result.whitelisted
-      }, null, 2);
     }
+    
+    console.log('[Phishing Detector] Off-page analysis complete (waiting to display)');
+    
   } catch (error) {
     console.error('[Phishing Detector] Off-page analysis error:', error);
     analysisData.moduleScores.offPage = null;
-    offpageOutput.textContent = JSON.stringify({
-      error: true,
-      reason: error.message
-    }, null, 2);
+  }
+}
+
+function displayOffpageResults() {
+  const offpageOutput = document.getElementById('offpage-output');
+  if (!offpageOutput) return;
+  
+  const result = analysisData.offpage;
+  
+  if (!result) {
+    offpageOutput.textContent = 'No off-page data available';
+    return;
   }
   
-  updateUnifiedScore();
+  if (result.error) {
+    offpageOutput.textContent = JSON.stringify({
+      error: true,
+      reason: result.reason
+    }, null, 2);
+  } else {
+    offpageOutput.textContent = JSON.stringify({
+      domain: result.domain,
+      daysAge: result.daysAge,
+      daysLifespan: result.daysLifespan,
+      daysSinceUpdate: result.daysSinceUpdate,
+      scoreAge: result.scoreAge,
+      scoreLifespan: result.scoreLifespan,
+      scoreUpdate: result.scoreUpdate,
+      rawScore: result.rawScore,
+      normalizedRisk: result.normalized,
+      whitelisted: result.whitelisted
+    }, null, 2);
+  }
 }
 
 function extractVisualScore(davssData) {
@@ -552,7 +564,8 @@ function displayRawData(scores, result) {
       action: ucb.action,
       predicted_reward: ucb.predicted_reward.toFixed(4),
       uncertainty: ucb.uncertainty.toFixed(4),
-      ucb_score: ucb.ucb.toFixed(4)
+      ucb_score: ucb.ucb.toFixed(4),
+      invalid: ucb.invalid || false
     })),
     "Final Unified Score": result.score.toFixed(4),
     "Unified Score (%)": (result.score * 100).toFixed(2) + "%",
