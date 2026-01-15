@@ -56,33 +56,57 @@ class LinUCB {
      * Extract context features from module scores
      */
     getContext(module_scores) {
-        // Filter valid scores (non-null)
-        const valid_scores = module_scores.filter(s => s !== null && s !== undefined && !isNaN(s));
+        // Create array to track which modules are valid (not null)
+        const valid_mask = [
+            module_scores[0] !== null && module_scores[0] !== undefined && !isNaN(module_scores[0]),
+            module_scores[1] !== null && module_scores[1] !== undefined && !isNaN(module_scores[1]),
+            module_scores[2] !== null && module_scores[2] !== undefined && !isNaN(module_scores[2])
+        ];
+        
+        const valid_scores = module_scores.filter((s, i) => valid_mask[i]);
         
         if (valid_scores.length === 0) {
             return [0.5, 0.5, 0.5, 0]; // Default neutral context
         }
         
-        // Pad with 0.5 if some modules missing
-        const padded_scores = [...module_scores];
+        // Use 0.5 as placeholder for context vector, but track which are actually valid
+        const context_scores = [...module_scores];
         for (let i = 0; i < 3; i++) {
-            if (padded_scores[i] === null || padded_scores[i] === undefined || isNaN(padded_scores[i])) {
-                padded_scores[i] = 0.5;
+            if (!valid_mask[i]) {
+                context_scores[i] = 0.5;
             }
         }
         
-        // Feature engineering
-        const ml_score = padded_scores[0];
-        const vis_score = padded_scores[1];
-        const off_score = padded_scores[2];
+        const ml_score = context_scores[0];
+        const vis_score = context_scores[1];
+        const off_score = context_scores[2];
         
-        // Disagreement measure: standard deviation of scores
-        const mean = (ml_score + vis_score + off_score) / 3;
-        const disagreement = Math.sqrt(
-            ((ml_score - mean) ** 2 + (vis_score - mean) ** 2 + (off_score - mean) ** 2) / 3
-        );
+        // Disagreement measure: standard deviation of ONLY valid scores
+        const mean = valid_scores.reduce((sum, s) => sum + s, 0) / valid_scores.length;
+        const variance = valid_scores.reduce((sum, s) => sum + (s - mean) ** 2, 0) / valid_scores.length;
+        const disagreement = Math.sqrt(variance);
         
         return [ml_score, vis_score, off_score, disagreement];
+    }
+    
+    /**
+     * Check if an action is valid given which modules have scores
+     * An action is invalid if it relies heavily (>= 50%) on a null module
+     */
+    isActionValid(action_idx, module_scores) {
+        const weights = this.actions[action_idx];
+        
+        for (let i = 0; i < 3; i++) {
+            const is_null = module_scores[i] === null || module_scores[i] === undefined || isNaN(module_scores[i]);
+            const weight = weights[i];
+            
+            // If this module is null and this action relies on it heavily, reject it
+            if (is_null && weight >= 0.5) {
+                return false;
+            }
+        }
+        
+        return true;
     }
     
     /**
@@ -214,6 +238,18 @@ class LinUCB {
         const ucb_values = [];
         
         for (let a = 0; a < this.n_actions; a++) {
+            // Skip actions that rely heavily on null modules
+            if (!this.isActionValid(a, module_scores)) {
+                ucb_values.push({
+                    action: a,
+                    predicted_reward: -Infinity,
+                    uncertainty: 0,
+                    ucb: -Infinity,
+                    invalid: true
+                });
+                continue;
+            }
+            
             // Compute A_a^(-1)
             const A_inv = this.matInverse(this.A[a]);
             
@@ -234,11 +270,12 @@ class LinUCB {
                 action: a,
                 predicted_reward: predicted_reward,
                 uncertainty: uncertainty,
-                ucb: ucb
+                ucb: ucb,
+                invalid: false
             });
         }
         
-        // Select action with highest UCB
+        // Select action with highest UCB (excluding invalid actions)
         const best = ucb_values.reduce((max, curr) => 
             curr.ucb > max.ucb ? curr : max
         );
@@ -260,7 +297,7 @@ class LinUCB {
     predict(module_scores) {
         const result = this.selectAction(module_scores);
         
-        // Calculate weighted score
+        // Calculate weighted score using ONLY non-null modules
         let final_score = 0;
         let weight_sum = 0;
         
@@ -271,9 +308,11 @@ class LinUCB {
             }
         }
         
-        // Normalize if some modules missing
+        // Normalize by actual weights used (not by 3)
         if (weight_sum > 0) {
             final_score /= weight_sum;
+        } else {
+            final_score = 0.5; // Fallback if all modules are null
         }
         
         return {
