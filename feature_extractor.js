@@ -55,12 +55,10 @@ class FeatureExtractor {
       const hostname = urlObj.hostname;
       const parts = hostname.split('.');
       
-      // Extract TLD and domain
       const tld = parts.length > 1 ? parts[parts.length - 1] : '';
       const domain = parts.length > 1 ? parts[parts.length - 2] : parts[0];
       const subdomain = parts.length > 2 ? parts.slice(0, -2).join('.') : '';
       
-      // Extract words from domain, subdomain, path
       const pathParts = urlObj.pathname.split(/[-.\/?=@&%:_]/);
       const domainParts = domain.split(/[-.\/?=@&%:_]/);
       const subdomainParts = subdomain.split(/[-.\/?=@&%:_]/);
@@ -86,7 +84,6 @@ class FeatureExtractor {
     }
   }
 
-  // URL-based features
   url_length(s) { return s.length; }
   
   having_ip_address() {
@@ -174,7 +171,6 @@ class FeatureExtractor {
   }
   
   random_domain() {
-    // Simplified version - checks if domain has many consonants in a row
     const consonantPattern = /[bcdfghjklmnpqrstvwxyz]{4,}/i;
     return consonantPattern.test(this.parsed.domain) ? 1 : 0;
   }
@@ -189,46 +185,34 @@ class FeatureExtractor {
   }
   
   count_redirection() {
-  // Check for meta refresh redirects
-  let count = 0;
-  
-  // Meta refresh tags
-  const metaRefresh = document.querySelectorAll('meta[http-equiv="refresh"]');
-  count += metaRefresh.length;
-  
-  // JavaScript redirects in script tags
-  const scripts = document.querySelectorAll('script');
-  scripts.forEach(script => {
-    const content = script.textContent || '';
-    // Check for common redirect patterns
-    if (/window\.location\s*=|location\.href\s*=|location\.replace\(/i.test(content)) {
-      count++;
-    }
-  });
-  
-  return Math.min(count, 5); // Cap at 5
-}
-
-count_external_redirection() {
-  // Check if redirects point to external domains
-  let count = 0;
-  
-  // Meta refresh with external URL
-  const metaRefresh = document.querySelectorAll('meta[http-equiv="refresh"]');
-  metaRefresh.forEach(meta => {
-    const content = meta.getAttribute('content') || '';
-    const urlMatch = content.match(/url\s*=\s*['"]?([^'">\s]+)/i);
-    if (urlMatch && urlMatch[1]) {
-      const url = urlMatch[1];
-      // Check if external
-      if (url.startsWith('http') && !url.includes(this.parsed.domain)) {
+    let count = 0;
+    const metaRefresh = document.querySelectorAll('meta[http-equiv="refresh"]');
+    count += metaRefresh.length;
+    const scripts = document.querySelectorAll('script');
+    scripts.forEach(script => {
+      const content = script.textContent || '';
+      if (/window\.location\s*=|location\.href\s*=|location\.replace\(/i.test(content)) {
         count++;
       }
-    }
-  });
-  
-  return count;
-}
+    });
+    return Math.min(count, 5);
+  }
+
+  count_external_redirection() {
+    let count = 0;
+    const metaRefresh = document.querySelectorAll('meta[http-equiv="refresh"]');
+    metaRefresh.forEach(meta => {
+      const content = meta.getAttribute('content') || '';
+      const urlMatch = content.match(/url\s*=\s*['"]?([^'">\s]+)/i);
+      if (urlMatch && urlMatch[1]) {
+        const url = urlMatch[1];
+        if (url.startsWith('http') && !url.includes(this.parsed.domain)) {
+          count++;
+        }
+      }
+    });
+    return count;
+  }
   
   length_word_raw() {
     return this.parsed.words_raw.length;
@@ -301,12 +285,10 @@ count_external_redirection() {
   }
   
   statistical_report() {
-    // Simplified - checks against known malicious patterns
     const suspicious = /146\.112\.61\.108|213\.174\.157\.151|at\.ua|usa\.cc/;
     return suspicious.test(this.url) ? 1 : 0;
   }
 
-  // Content-based features (require DOM)
   nb_hyperlinks() {
     if (!this.dom) return 0;
     const hrefs = this.dom.querySelectorAll('[href]').length;
@@ -487,7 +469,7 @@ count_external_redirection() {
   domain_with_copyright() {
     if (!this.dom) return 0;
     const html = this.dom.documentElement.outerHTML;
-    const copyrightMatch = html.match(/[Ã‚Â©Ã‚Â®Ã¢â€žÂ¢]/);
+    const copyrightMatch = html.match(/[©®™]/);
     if (!copyrightMatch) return 0;
     
     const idx = copyrightMatch.index;
@@ -495,7 +477,6 @@ count_external_redirection() {
     return context.toLowerCase().includes(this.parsed.domain.toLowerCase()) ? 0 : 1;
   }
 
-  // Extract all features in correct order
   extractFeatures() {
     if (!this.parsed) return null;
 
@@ -561,10 +542,10 @@ count_external_redirection() {
       this.external_hyperlinks(),
       this.null_hyperlinks(),
       this.external_css(),
-      this.count_redirection(), // Use the function instead of 0
-      this.count_external_redirection(), // Use the function instead of 0
-      0, // internal_errors (still 0 - can't detect without network requests)
-      0, // external_errors (still 0 - can't detect without network requests)
+      this.count_redirection(),
+      this.count_external_redirection(),
+      0,
+      0,
       this.login_form(),
       this.external_favicon(),
       this.links_in_tags(),
@@ -586,7 +567,4 @@ count_external_redirection() {
   }
 }
 
-// Make available globally
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = FeatureExtractor;
-}
+export { FeatureExtractor };

@@ -341,29 +341,39 @@ class LinUCB {
     }
     
     /**
-     * Full feedback loop: predict → get user feedback → update
-     */
-    async processUserFeedback(module_scores, user_label) {
-        // Get prediction
-        const prediction_result = this.predict(module_scores);
-        
-        // Calculate reward: 1 if correct, 0 if wrong
-        const prediction = prediction_result.score > 0.5 ? 1 : 0;
-        const reward = prediction === user_label ? 1 : 0;
-        
-        // Update model
-        this.update(prediction_result.action, prediction_result.context, reward);
-        
-        // Save to storage
-        await this.save();
-        
-        return {
-            prediction: prediction_result.score,
-            reward: reward,
-            action: prediction_result.action,
-            weights_used: prediction_result.weights
-        };
+ * Full feedback loop: predict → get user feedback → update
+ * Uses CONTINUOUS REWARD instead of binary
+ */
+async processUserFeedback(module_scores, user_label) {
+    // Get current prediction
+    const prediction_result = this.predict(module_scores);
+    const currentScore = prediction_result.score;
+    
+    // ✅ CONTINUOUS REWARD:
+    let reward;
+    if (user_label === 1) {
+        // User says PHISHING → We want HIGH scores
+        reward = currentScore;  // Higher score = higher reward
+    } else {
+        // User says SAFE → We want LOW scores  
+        reward = 1 - currentScore;  // Lower score = higher reward
     }
+    
+    // Update model with continuous reward
+    this.update(prediction_result.action, prediction_result.context, reward);
+    
+    // Save to storage
+    await this.save();
+    
+    console.log(`[LinUCB] Feedback: label=${user_label}, score=${currentScore.toFixed(3)}, reward=${reward.toFixed(3)}`);
+    
+    return {
+        prediction: currentScore,
+        reward: reward,
+        action: prediction_result.action,
+        weights_used: prediction_result.weights
+    };
+}
     
     /**
      * Get human-readable status
@@ -404,7 +414,7 @@ class LinUCB {
     }
     
     /**
-     * Save to chrome.storage.local
+     * Save to chrome.storage.sync (persists across devices/reinstalls)
      */
     async save() {
         try {
@@ -415,28 +425,43 @@ class LinUCB {
                 alpha: this.alpha,
                 timestamp: Date.now()
             };
-            
-            await chrome.storage.local.set({ 'linucb_model': data });
-            console.log('[LinUCB] Model saved to storage');
+        
+            // Use .sync instead of .local for cross-device persistence
+            await chrome.storage.sync.set({ 'linucb_model': data });
+            console.log('[LinUCB] Model saved to sync storage (trials:', this.total_trials, ')');
         } catch (error) {
             console.error('[LinUCB] Failed to save model:', error);
+            // Fallback to local if sync fails
+            try {
+                await chrome.storage.local.set({ 'linucb_model': data });
+                console.log('[LinUCB] Model saved to local storage as fallback');
+            } catch (e) {
+                console.error('[LinUCB] All storage methods failed:', e);
+            }
         }
     }
-    
+
     /**
-     * Load from chrome.storage.local
+     * Load from chrome.storage.sync (then fallback to local)
      */
     async load() {
         try {
-            const result = await chrome.storage.local.get('linucb_model');
-            
+            // Try sync storage first
+            let result = await chrome.storage.sync.get('linucb_model');
+        
+            // Fallback to local if sync is empty
+            if (!result.linucb_model) {
+                console.log('[LinUCB] No model in sync storage, checking local...');
+                result = await chrome.storage.local.get('linucb_model');
+            }
+        
             if (result.linucb_model) {
                 const data = result.linucb_model;
                 this.A = data.A;
                 this.b = data.b;
                 this.total_trials = data.total_trials;
                 this.alpha = data.alpha;
-                console.log('[LinUCB] Model loaded from storage:', this.total_trials, 'trials');
+                console.log('[LinUCB] ✅ Model loaded from storage:', this.total_trials, 'trials');
                 return true;
             } else {
                 console.log('[LinUCB] No saved model found, starting fresh');
@@ -465,7 +490,6 @@ class LinUCB {
     }
 }
 
-// Export for use in other scripts
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = LinUCB;
-}
+
+// Export for ES6 modules (Chrome extensions)
+export { LinUCB };
